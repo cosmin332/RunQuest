@@ -6,7 +6,7 @@
 
 import { SESSION_TYPES } from './program-data.js';
 import { getState, setState } from './db.js';
-import { mondayOf, addDays, isoDay, weekKey, sum } from './utils.js';
+import { mondayOf, addDays, isoDay, weekKey, sum, mean } from './utils.js';
 
 export const XP_BONUS = { week: 100, block: 300, program: 1000, badge: 25 };
 
@@ -215,4 +215,104 @@ export function evaluateBadges(programs, activities) {
 export function earnedBadges() {
   const gamif = getState('gamification', { badges: {} });
   return gamif.badges || {};
+}
+
+// ---------- Timeline d'XP cumulée ----------
+// Reconstruit les gains datés : séances (completedAt), bonus de semaine
+// (à la date de la dernière séance de la semaine), badges (+25).
+
+export function xpTimeline(programs) {
+  const events = [];
+  for (const p of programs) {
+    for (const w of p.weeks) {
+      let lastDate = null;
+      for (const s of w.sessions) {
+        if (!s.completed) continue;
+        const d = s.completedAt || isoDay(sessionDate(p, w, s));
+        events.push({ date: d, xp: SESSION_TYPES[s.type]?.xp || 30 });
+        if (!lastDate || d > lastDate) lastDate = d;
+      }
+      if (weekComplete(w) && lastDate) events.push({ date: lastDate, xp: XP_BONUS.week });
+    }
+  }
+  const badges = earnedBadges();
+  for (const dateIso of Object.values(badges)) {
+    events.push({ date: isoDay(dateIso), xp: XP_BONUS.badge });
+  }
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  let cum = 0;
+  const byDay = new Map();
+  for (const e of events) {
+    cum += e.xp;
+    byDay.set(e.date, cum);
+  }
+  return [...byDay.entries()].map(([date, xp]) => ({ date, xp }));
+}
+
+// ---------- Discipline : comment tu t'entraînes vraiment ----------
+
+export function disciplineStats(programs, activities) {
+  const sessions = programs.flatMap(p => allSessions(p));
+  const done = sessions.filter(s => s.completed);
+
+  // taux de complétion par type (uniquement séances passées ou faites)
+  const today = new Date(); today.setHours(23, 59, 59);
+  const byType = {};
+  for (const p of programs) {
+    for (const w of p.weeks) {
+      for (const s of w.sessions) {
+        const due = s.completed || sessionDate(p, w, s) <= today;
+        if (!due || s.optional) continue;
+        if (!byType[s.type]) byType[s.type] = { done: 0, total: 0 };
+        byType[s.type].total++;
+        if (s.completed) byType[s.type].done++;
+      }
+    }
+  }
+
+  // jour de la semaine et heure des activités liées
+  const linkedIds = new Set(done.map(s => s.activityId).filter(Boolean));
+  const linked = activities.filter(a => linkedIds.has(a.id));
+  const dayCount = Array(7).fill(0);
+  const hours = [];
+  for (const a of linked) {
+    const d = new Date(a.date);
+    dayCount[(d.getDay() + 6) % 7]++;
+    hours.push(d.getHours() + d.getMinutes() / 60);
+  }
+  const favDay = dayCount.some(c => c) ? dayCount.indexOf(Math.max(...dayCount)) : null;
+
+  return {
+    byType,
+    dayCount,
+    favDay,
+    avgHour: hours.length ? hours.reduce((a, b) => a + b, 0) / hours.length : null,
+    totalDone: done.length,
+    withLink: done.filter(s => s.activityId).length,
+  };
+}
+
+// ---------- Défis de la semaine (motivationnels, recalculés en continu) ----------
+
+export function weeklyQuests(programs, activities) {
+  const monday = mondayOf(new Date());
+  const weekIso = isoDay(monday);
+  const inWeek = d => weekKey(d) === weekIso;
+
+  const sessions = programs.flatMap(p => p.weeks.flatMap(w =>
+    w.sessions.map(s => ({ ...s, _p: p, _w: w }))));
+  const doneThisWeek = sessions.filter(s => s.completed && s.completedAt && inWeek(s.completedAt));
+  const runsThisWeek = activities.filter(a => a.sport === 'run' && inWeek(a.date));
+  const kmWeek = sum(runsThisWeek.map(a => (a.distance || 0) / 1000));
+
+  const active = programs.find(p => !p.archived);
+  const currentWeek = active ? active.weeks.find(w => w.num === programStats(active).currentWeekNum) : null;
+  const plannedCount = currentWeek ? currentWeek.sessions.filter(s => !s.optional && !['repos'].includes(s.type)).length : 5;
+
+  return [
+    { icon: '✅', label: 'Valider les séances de la semaine', cur: doneThisWeek.length, target: Math.max(plannedCount, 1) },
+    { icon: '🦵', label: '2 renfos tibias & gainage', cur: doneThisWeek.filter(s => s.type === 'renfo').length, target: 2 },
+    { icon: '🛣️', label: currentWeek?.targetKm ? `~${currentWeek.targetKm} km dans la semaine` : '20 km dans la semaine', cur: +kmWeek.toFixed(1), target: currentWeek?.targetKm || 20 },
+    { icon: '🐢', label: 'Au moins 2 sorties « vraiment lentes »', cur: runsThisWeek.filter(a => { const p = a.distance && a.movingTime ? a.movingTime / (a.distance / 1000) : 0; return p >= 370; }).length, target: 2 },
+  ].map(q => ({ ...q, done: q.cur >= q.target, pct: Math.min(q.cur / q.target, 1) }));
 }

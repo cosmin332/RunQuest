@@ -363,6 +363,69 @@ h2 { font-size: 1.15rem; }
 .heat-week { display: flex; flex-direction: column; gap: 3px; }
 .heat-cell { width: 13px; height: 13px; border-radius: 4px; background: #e9edf5; }
 
+/* ---------- Stats enrichies ---------- */
+.tiles-3 { grid-template-columns: repeat(3, 1fr); }
+.cmp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.delta { font-size: .62rem; font-weight: 800; margin-left: 4px; color: var(--muted); }
+.delta-good { color: var(--green); }
+.delta-bad { color: var(--pink); }
+.card-warn { background: #fff7ed; border-color: #fed7aa; }
+
+.readiness-card.ready-green { background: linear-gradient(135deg, #ecfdf5, #fff); border-color: #a7f3d0; }
+.readiness-card.ready-orange { background: linear-gradient(135deg, #fffbeb, #fff); border-color: #fde68a; }
+.readiness-card.ready-red { background: linear-gradient(135deg, #fef2f2, #fff); border-color: #fecaca; }
+.ready-head { display: flex; gap: 12px; align-items: flex-start; }
+.ready-light { font-size: 1.8rem; line-height: 1.2; }
+.ready-parts { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+
+.insight { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; font-size: .82rem; margin-bottom: 6px; line-height: 1.4; }
+.insight-good { background: #ecfdf5; }
+.insight-warn { background: #fff7ed; }
+.insight-info { background: var(--bg); }
+.insight-icon { font-size: 1.05rem; }
+
+.top-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.top-row:first-child { border-top: none; }
+.top-row.clickable { cursor: pointer; }
+.top-icon { font-size: 1.3rem; }
+.top-main { flex: 1; }
+.top-label { font-size: .72rem; color: var(--muted); font-weight: 600; }
+.top-value { font-weight: 800; font-size: .9rem; }
+
+.gear-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.gear-row:first-of-type { border-top: none; }
+.gear-info { flex: 1; min-width: 0; }
+.gear-name { font-weight: 700; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gear-bar { width: 90px; height: 8px; background: #e9edf5; border-radius: 999px; overflow: hidden; flex-shrink: 0; }
+.gear-fill { height: 100%; background: linear-gradient(90deg, var(--green), var(--yellow)); border-radius: 999px; }
+.gear-fill.gear-worn { background: linear-gradient(90deg, var(--yellow), var(--pink)); }
+.gear-alert { color: var(--pink); font-weight: 700; }
+
+/* ---------- Progrès enrichi ---------- */
+.quest { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.quest:first-of-type { border-top: none; }
+.quest-icon { font-size: 1.2rem; width: 28px; text-align: center; }
+.quest-main { flex: 1; min-width: 0; }
+.quest-label { font-size: .82rem; font-weight: 600; }
+.quest-bar { height: 7px; background: #e9edf5; border-radius: 999px; overflow: hidden; margin-top: 4px; }
+.quest-bar > div { height: 100%; background: linear-gradient(90deg, var(--yellow), var(--primary)); border-radius: 999px; transition: width .4s; }
+.quest-done .quest-bar > div { background: var(--green); }
+.quest-done .quest-label { color: var(--green); }
+.quest-count { font-size: .72rem; font-weight: 800; color: var(--muted); min-width: 44px; text-align: right; }
+.quest-congrats { margin-top: 10px; font-size: .82rem; font-weight: 700; color: #b45309; text-align: center; }
+
+.trophy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+.trophy { background: linear-gradient(160deg, #fffbeb, #fff); border: 1px solid var(--yellow); border-radius: 14px; padding: 10px 6px; text-align: center; }
+.trophy.clickable { cursor: pointer; }
+.trophy-icon { font-size: 1.4rem; }
+.trophy-value { font-weight: 800; font-size: .88rem; margin-top: 2px; }
+.trophy-label { font-size: .62rem; color: var(--muted); margin-top: 2px; }
+.trophy-date { font-size: .58rem; color: #b48b00; font-weight: 700; margin-top: 2px; }
+
+.disc-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.disc-bar { flex: 1; height: 8px; background: #e9edf5; border-radius: 999px; overflow: hidden; }
+.disc-bar > div { height: 100%; border-radius: 999px; }
+
 /* ---------- Réglages ---------- */
 .import-row {
   display: flex; align-items: center; gap: 12px; padding: 12px 0;

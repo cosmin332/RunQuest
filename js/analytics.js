@@ -4,7 +4,7 @@
 // triées ou non — elles se chargent du tri.
 // ============================================================
 
-import { weekKey, mondayOf, addDays, isoDay, mean, sum, paceOf, clamp, linearTrend } from './utils.js';
+import { weekKey, mondayOf, addDays, isoDay, mean, median, sum, paceOf, clamp, linearTrend } from './utils.js';
 
 // Courses plausibles uniquement : élimine les enregistrements corrompus
 // (ex. workout Santé avec 11 km en 7 min) via une allure entre 2:30 et 15:00/km.
@@ -252,6 +252,286 @@ export function readinessSub50(acts, programStats, metricsVo2) {
 
   const total = sum(parts.map(p => p.score));
   return { total, parts };
+}
+
+// ---------- Fitness / Fatigue / Forme (modèle CTL/ATL/TSB) ----------
+// CTL = charge chronique (moyenne exponentielle 42 j) → « Fitness »
+// ATL = charge aiguë (7 j) → « Fatigue »  ·  TSB = CTL - ATL → « Forme »
+// Retourne [{ date, ctl, atl, tsb }] sur nDays.
+
+export function fitnessSeries(acts, nDays = 180, fcMax = 195, fcRepos = 55) {
+  const runs = runsOnly(acts);
+  if (!runs.length) return [];
+  const dailyLoad = new Map();
+  let firstDay = new Date();
+  for (const a of runs) {
+    const d = isoDay(a.date);
+    dailyLoad.set(d, (dailyLoad.get(d) || 0) + trainingLoad(a, fcMax, fcRepos));
+    if (new Date(a.date) < firstDay) firstDay = new Date(a.date);
+  }
+  const out = [];
+  let ctl = 0, atl = 0;
+  const today = new Date();
+  const start = new Date(Math.max(firstDay.getTime(), addDays(today, -540).getTime()));
+  for (let d = new Date(start); d <= today; d = addDays(d, 1)) {
+    const load = dailyLoad.get(isoDay(d)) || 0;
+    ctl += (load - ctl) / 42;
+    atl += (load - atl) / 7;
+    if (d >= addDays(today, -nDays)) {
+      out.push({ date: isoDay(d), ctl: +ctl.toFixed(1), atl: +atl.toFixed(1), tsb: +(ctl - atl).toFixed(1) });
+    }
+  }
+  return out;
+}
+
+// ---------- Monotonie & contrainte (Foster) sur les 7 derniers jours ----------
+
+export function monotony(acts, fcMax = 195, fcRepos = 55) {
+  const runs = runsOnly(acts);
+  const loads = [];
+  for (let i = 6; i >= 0; i--) {
+    const day = isoDay(addDays(new Date(), -i));
+    loads.push(sum(runs.filter(a => isoDay(a.date) === day).map(a => trainingLoad(a, fcMax, fcRepos))));
+  }
+  const m = mean(loads) || 0;
+  const sd = Math.sqrt(mean(loads.map(l => (l - m) ** 2)) || 0);
+  const mono = sd > 0 ? m / sd : null;
+  return { weekLoad: sum(loads), monotony: mono ? +mono.toFixed(2) : null, strain: mono ? Math.round(sum(loads) * mono) : null };
+}
+
+// ---------- Dérive cardiaque (découplage aérobie) ----------
+// Sur les sorties régulières ≥ 25 min avec série FC : FC moyenne 2e moitié vs
+// 1re moitié (après 5 min d'échauffement). < 5 % = base aérobie solide.
+
+export function hrDrift(a, fcMax = 195) {
+  if (!a.hrSeries || a.hrSeries.length < 12 || !a.movingTime || a.movingTime < 25 * 60) return null;
+  if (a.avgHr && a.avgHr > 0.85 * fcMax) return null; // fractionné : non pertinent
+  const usable = a.hrSeries.filter(([t]) => t >= 5);
+  if (usable.length < 8) return null;
+  const mid = Math.floor(usable.length / 2);
+  const h1 = mean(usable.slice(0, mid).map(x => x[1]));
+  const h2 = mean(usable.slice(mid).map(x => x[1]));
+  if (!h1 || !h2) return null;
+  return +(((h2 / h1) - 1) * 100).toFixed(1);
+}
+
+export function driftSeries(acts, fcMax = 195, sinceDays = 240) {
+  return runsOnly(acts)
+    .filter(a => new Date(a.date) > addDays(new Date(), -sinceDays))
+    .map(a => ({ date: isoDay(a.date), drift: hrDrift(a, fcMax), name: a.name, km: a.distance / 1000 }))
+    .filter(x => x.drift != null && x.drift > -8 && x.drift < 25)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// ---------- VDOT mensuel (meilleure perf de chaque mois) ----------
+
+export function monthlyVdot(acts, months = 14) {
+  const runs = runsOnly(acts).filter(a => a.distance >= 3000);
+  const byMonth = new Map();
+  for (const a of runs) {
+    const key = a.date.slice(0, 7);
+    const v = vdot(a.distance, a.movingTime);
+    if (v > 20 && v < 85 && (!byMonth.has(key) || v > byMonth.get(key).v)) byMonth.set(key, { v, a });
+  }
+  const out = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ month: key, ...(byMonth.get(key) || { v: null, a: null }) });
+  }
+  return out;
+}
+
+// ---------- Comparatif 30 derniers jours vs 30 précédents ----------
+
+export function compare30d(acts) {
+  const runs = runsOnly(acts);
+  const now = new Date();
+  const win = (from, to) => runs.filter(a => new Date(a.date) > addDays(now, -from) && new Date(a.date) <= addDays(now, -to));
+  const agg = list => {
+    const km = sum(list.map(a => a.distance)) / 1000;
+    const time = sum(list.map(a => a.movingTime));
+    const hrList = list.filter(a => a.avgHr);
+    const cadList = list.filter(a => a.cadence && a.cadence > 120);
+    return {
+      km: +km.toFixed(1),
+      count: list.length,
+      pace: km > 0 ? time / km : null,
+      hr: hrList.length ? mean(hrList.map(a => a.avgHr)) : null,
+      cadence: cadList.length ? mean(cadList.map(a => a.cadence)) : null,
+      elev: Math.round(sum(list.map(a => a.elevGain || 0))),
+    };
+  };
+  return { current: agg(win(30, 0)), previous: agg(win(60, 30)) };
+}
+
+// ---------- Récap mensuel (12 mois) ----------
+
+export function monthlyRecap(acts, months = 12) {
+  const runs = runsOnly(acts);
+  const byMonth = new Map();
+  for (const a of runs) {
+    const key = a.date.slice(0, 7);
+    if (!byMonth.has(key)) byMonth.set(key, { km: 0, count: 0, elev: 0, time: 0 });
+    const m = byMonth.get(key);
+    m.km += a.distance / 1000; m.count++; m.elev += a.elevGain || 0; m.time += a.movingTime || 0;
+  }
+  const out = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ month: key, label: d.toLocaleDateString('fr-FR', { month: 'short' }), ...(byMonth.get(key) || { km: 0, count: 0, elev: 0, time: 0 }) });
+  }
+  return out;
+}
+
+// ---------- Feu du jour : prêt à s'entraîner ? ----------
+// Compare HRV et FC repos récentes à leurs baselines 30 j + forme (TSB).
+
+export function readinessToday(acts, metrics, fcMax = 195, fcRepos = 55) {
+  const hrv = metricSeries(metrics, 'heart_rate_variability', 45);
+  const rhr = metricSeries(metrics, 'resting_heart_rate', 45);
+  const fit = fitnessSeries(acts, 2, fcMax, fcRepos);
+  const tsb = fit.length ? fit.at(-1).tsb : null;
+
+  const parts = [];
+  let score = 0, nb = 0;
+  if (hrv.length >= 10) {
+    const recent = mean(hrv.slice(-3).map(m => m.qty));
+    const base = median(hrv.slice(0, -3).map(m => m.qty));
+    const ratio = recent / base;
+    const s = ratio >= 1.02 ? 2 : ratio >= 0.92 ? 1 : 0;
+    parts.push({ label: 'HRV vs baseline', value: `${Math.round(recent)} ms (base ${Math.round(base)})`, s });
+    score += s; nb++;
+  }
+  if (rhr.length >= 10) {
+    const recent = mean(rhr.slice(-3).map(m => m.qty));
+    const base = median(rhr.slice(0, -3).map(m => m.qty));
+    const s = recent <= base + 1 ? 2 : recent <= base + 4 ? 1 : 0;
+    parts.push({ label: 'FC repos vs baseline', value: `${Math.round(recent)} bpm (base ${Math.round(base)})`, s });
+    score += s; nb++;
+  }
+  if (tsb != null) {
+    const s = tsb >= -5 ? 2 : tsb >= -15 ? 1 : 0;
+    parts.push({ label: 'Forme (TSB)', value: tsb > 0 ? `+${tsb}` : `${tsb}`, s });
+    score += s; nb++;
+  }
+  if (!nb) return null;
+  const avg = score / nb;
+  const status = avg >= 1.5 ? 'green' : avg >= 0.8 ? 'orange' : 'red';
+  const advice = {
+    green: 'Feu vert : ton corps est prêt, la séance de qualité peut envoyer.',
+    orange: 'Feu orange : séance possible mais reste à l’écoute — EF plutôt que qualité si sensation moyenne.',
+    red: 'Feu rouge : signaux de fatigue. Repos ou footing très léger, tes tibias te diront merci.',
+  }[status];
+  return { status, parts, advice };
+}
+
+// ---------- Chaussures : usure par paire ----------
+
+export function gearStats(acts) {
+  const runs = runsOnly(acts).filter(a => a.gear);
+  const byGear = new Map();
+  for (const a of runs) {
+    if (!byGear.has(a.gear)) byGear.set(a.gear, { km: 0, count: 0, last: a.date, first: a.date });
+    const g = byGear.get(a.gear);
+    g.km += a.distance / 1000; g.count++;
+    if (a.date > g.last) g.last = a.date;
+    if (a.date < g.first) g.first = a.date;
+  }
+  return [...byGear.entries()]
+    .map(([name, g]) => ({ name, ...g, km: Math.round(g.km), wear: Math.min(g.km / 700, 1) }))
+    .sort((a, b) => b.last.localeCompare(a.last));
+}
+
+// ---------- Tops (grands moments) ----------
+
+export function tops(acts) {
+  const runs = runsOnly(acts);
+  if (!runs.length) return null;
+  const weeks = weeklyVolume(acts, 260).filter(w => w.km > 0);
+  const months = monthlyRecap(acts, 36).filter(m => m.km > 0);
+  const longest = runs.reduce((a, b) => (a.distance > b.distance ? a : b));
+  const longestTime = runs.reduce((a, b) => ((a.movingTime || 0) > (b.movingTime || 0) ? a : b));
+  const mostElev = runs.filter(a => a.elevGain).sort((a, b) => b.elevGain - a.elevGain)[0] || null;
+  const bestWeek = weeks.length ? weeks.reduce((a, b) => (a.km > b.km ? a : b)) : null;
+  const bestWeekCount = weeks.length ? weeks.reduce((a, b) => (a.count > b.count ? a : b)) : null;
+  const bestMonth = months.length ? months.reduce((a, b) => (a.km > b.km ? a : b)) : null;
+  return { longest, longestTime, mostElev, bestWeek, bestWeekCount, bestMonth };
+}
+
+// ---------- Insights automatiques ----------
+// Phrases générées à partir des tendances marquantes. Retourne [{icon, text, tone}].
+
+export function insights(acts, metrics, fcMax = 195) {
+  const out = [];
+  const push = (icon, text, tone = 'info') => out.push({ icon, text, tone });
+
+  // Efficacité aérobie sur 8 semaines
+  const eff = aerobicEfficiency(acts, fcMax).filter(e => new Date(e.date) > addDays(new Date(), -56));
+  if (eff.length >= 6) {
+    const tr = linearTrend(eff.map(e => e.ei));
+    if (tr) {
+      const deltaPct = (tr.slope * (eff.length - 1)) / eff[0].ei * 100;
+      if (deltaPct > 2) push('🚀', `À fréquence cardiaque égale, tu cours ~${deltaPct.toFixed(0)} % plus vite qu'il y a 8 semaines sur tes footings faciles. Le moteur aérobie répond.`, 'good');
+      else if (deltaPct < -3) push('🪫', `Ton efficacité aérobie recule un peu sur 8 semaines (${deltaPct.toFixed(0)} %) — souvent un signe de fatigue accumulée ou de footings trop rapides.`, 'warn');
+    }
+  }
+
+  // VO2max 60 j
+  const vo2 = metricSeries(metrics, 'vo2_max', 70);
+  if (vo2.length >= 4) {
+    const delta = vo2.at(-1).qty - vo2[0].qty;
+    if (delta >= 1) push('🫁', `VO₂max en hausse de ${delta.toFixed(1)} pt en 2 mois (${vo2.at(-1).qty.toFixed(1)}). La zone sub-50 (~52–54) ${vo2.at(-1).qty >= 52 ? 'est atteinte' : 'se rapproche'}.`, 'good');
+    else if (delta <= -1.5) push('🫁', `VO₂max en baisse de ${Math.abs(delta).toFixed(1)} pt en 2 mois — surveille sommeil et récupération.`, 'warn');
+  }
+
+  // Volume 4 sem vs 4 précédentes
+  const w8 = weeklyVolume(acts, 8);
+  if (w8.length === 8) {
+    const cur = sum(w8.slice(4).map(w => w.km)), prev = sum(w8.slice(0, 4).map(w => w.km));
+    if (prev > 8) {
+      const pct = ((cur - prev) / prev) * 100;
+      if (pct > 35) push('⚠️', `Volume en hausse de ${pct.toFixed(0)} % sur 4 semaines — au-delà des +10 %/sem recommandés avec tes tibias. Le plan gère la progression : ne rajoute pas.`, 'warn');
+      else if (pct > 8) push('📈', `Volume en progression maîtrisée (+${pct.toFixed(0)} % sur 4 semaines).`, 'good');
+      else if (pct < -30) push('📉', `Volume en net retrait (-${Math.abs(pct).toFixed(0)} %) sur 4 semaines. Une reprise progressive s'impose avant la qualité.`, 'warn');
+    }
+  }
+
+  // Dérive cardiaque récente
+  const drifts = driftSeries(acts, fcMax, 45);
+  if (drifts.length >= 3) {
+    const avg = mean(drifts.map(d => d.drift));
+    if (avg < 5) push('🫀', `Dérive cardiaque moyenne de ${avg.toFixed(1)} % sur tes sorties longues récentes : base aérobie solide, tu tiendras l'allure au 10 km.`, 'good');
+    else if (avg > 9) push('🫀', `Dérive cardiaque élevée (${avg.toFixed(1)} %) : la FC monte beaucoup en fin de sortie. Plus d'EF vraiment lent la corrigera.`, 'warn');
+  }
+
+  // Cadence
+  const cad = runsOnly(acts).filter(a => a.cadence > 120 && new Date(a.date) > addDays(new Date(), -30));
+  if (cad.length >= 3) {
+    const avg = mean(cad.map(a => a.cadence));
+    if (avg < 165) push('👟', `Cadence moyenne ${Math.round(avg)} pas/min ce mois-ci. Monter vers 170–175 réduirait l'impact sur tes tibias (raccourcis la foulée, ne force pas).`, 'info');
+    else push('👟', `Cadence moyenne ${Math.round(avg)} pas/min : bon amorti, tes tibias apprécient.`, 'good');
+  }
+
+  // Sommeil 14 j
+  const sleep = metricSeries(metrics, 'sleep', 14).map(m => m.total).filter(Boolean);
+  if (sleep.length >= 5) {
+    const avg = mean(sleep);
+    if (avg < 7) push('😴', `${Math.floor(avg)} h ${String(Math.round((avg % 1) * 60)).padStart(2, '0')} de sommeil en moyenne sur 2 semaines : c'est court pour encaisser la charge. Vise 7 h 30+.`, 'warn');
+  }
+
+  // Projection 10 km
+  const pred = predict10k(acts);
+  if (pred) {
+    const delta = pred.predicted - 50 * 60;
+    if (delta <= 0) push('🏆', `Ta meilleure perf récente projette un 10 km en ${Math.floor(pred.predicted / 60)}:${String(Math.round(pred.predicted % 60)).padStart(2, '0')} — le sub-50 est dans les jambes, reste à le concrétiser le jour J.`, 'good');
+    else if (delta < 180) push('🎯', `Plus que ${Math.round(delta / 60)} min ${Math.round(delta % 60)} s à gagner sur la projection Riegel pour le sub-50. Le bloc spécifique est fait pour ça.`, 'info');
+  }
+
+  return out;
 }
 
 // ---------- Séries de métriques santé prêtes à tracer ----------
