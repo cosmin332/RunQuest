@@ -226,8 +226,13 @@ export function parseHealthExport(json) {
   for (const w of data.workouts || []) {
     const start = new Date(String(w.start).replace(' +', '+').replace(' ', 'T'));
     if (isNaN(start)) continue;
-    const isRun = /course|running|run/i.test(w.name || '');
-    const isWalk = /marche|walking/i.test(w.name || '');
+    const n = w.name || '';
+    const sport = /course|running|run\b/i.test(n) ? 'run'
+      : /marche|walking|randonnée|hiking/i.test(n) ? 'walk'
+      : /cyclisme|vélo|cycling/i.test(n) ? 'ride'
+      : /natation|swim/i.test(n) ? 'swim'
+      : /force|musculation|strength|poids/i.test(n) ? 'strength'
+      : 'other';
     let hrSeries = null;
     if (Array.isArray(w.heartRateData) && w.heartRateData.length) {
       const t0 = start.getTime();
@@ -258,7 +263,7 @@ export function parseHealthExport(json) {
       source: 'health',
       date: start.toISOString(),
       name: w.name || 'Entraînement',
-      sport: isRun ? 'run' : isWalk ? 'walk' : 'other',
+      sport,
       distance: w.distance?.qty != null ? Math.round(w.distance.qty * 1000) : null, // km -> m
       movingTime: w.duration ? Math.round(w.duration) : null,
       elapsedTime: w.duration ? Math.round(w.duration) : null,
@@ -300,17 +305,32 @@ export function parseHealthExport(json) {
 }
 
 // ---------- Fusion / déduplication multi-sources ----------
-// Même départ (±20 min) et durées comparables => même activité.
+// Deux enregistrements sont considérés comme la MÊME activité si leurs plages
+// horaires se chevauchent majoritairement (double enregistrement montre/téléphone,
+// ou même séance vue par Strava et par Santé avec des durées différentes).
+// Des segments consécutifs sans chevauchement restent des activités distinctes.
 // Priorité des sources : strava-api > strava-archive > gpx > health.
 
 const SOURCE_PRIORITY = { 'strava-api': 4, 'strava-archive': 3, 'gpx': 2, 'health': 1 };
 
+function sportsCompatible(a, b) {
+  return a.sport === b.sport || a.sport === 'other' || b.sport === 'other';
+}
+
 function sameActivity(a, b) {
-  const dt = Math.abs(new Date(a.date) - new Date(b.date));
-  if (dt > 20 * 60 * 1000) return false;
-  const da = a.movingTime || a.elapsedTime || 0, db = b.movingTime || b.elapsedTime || 0;
-  if (da && db && Math.abs(da - db) > Math.max(300, 0.25 * Math.max(da, db))) return false;
-  return true;
+  if (!sportsCompatible(a, b)) return false;
+  const startA = new Date(a.date).getTime(), startB = new Date(b.date).getTime();
+  if (Math.abs(startA - startB) > 30 * 60 * 1000) return false;
+  const durA = (a.movingTime || a.elapsedTime || 0) * 1000;
+  const durB = (b.movingTime || b.elapsedTime || 0) * 1000;
+  // durées inexploitables : on se rabat sur un départ quasi identique
+  if (durA < 60000 || durB < 60000) return Math.abs(startA - startB) < 3 * 60 * 1000;
+  // chevauchement des plages [début, fin] rapporté à la plus courte des deux
+  const overlap = Math.min(startA + durA, startB + durB) - Math.max(startA, startB);
+  if (overlap / Math.min(durA, durB) >= 0.6) return true;
+  // départs quasi simultanés avec durées comparables (horodatages imprécis)
+  return Math.abs(startA - startB) < 2 * 60 * 1000
+    && Math.abs(durA - durB) <= 0.3 * Math.max(durA, durB);
 }
 
 function mergeInto(primary, secondary) {
@@ -325,9 +345,11 @@ function mergeInto(primary, secondary) {
 }
 
 // existing : activités déjà en base ; incoming : nouvelles.
-// Retourne { toSave, added, merged } — toSave contient les fusions et les ajouts.
+// Retourne { toSave, added, merged, remap } — toSave contient fusions et ajouts,
+// remap : Map(idAbsorbé -> idConservé) pour re-lier les séances de programme.
 export function mergeActivityLists(existing, incoming) {
   const result = new Map(existing.map(a => [a.id, a]));
+  const remap = new Map();
   let added = 0, mergedCount = 0;
 
   for (const inc of incoming) {
@@ -342,9 +364,18 @@ export function mergeActivityLists(existing, incoming) {
     }
     if (match) {
       const pInc = SOURCE_PRIORITY[inc.source] || 0, pEx = SOURCE_PRIORITY[match.source] || 0;
-      const [primary, secondary] = pInc > pEx ? [inc, match] : [match, inc];
+      // à priorité égale (ex. deux enregistrements Strava simultanés),
+      // on garde l'enregistrement le plus long — le plus complet
+      let primary, secondary;
+      if (pInc !== pEx) [primary, secondary] = pInc > pEx ? [inc, match] : [match, inc];
+      else [primary, secondary] = (inc.movingTime || 0) > (match.movingTime || 0) ? [inc, match] : [match, inc];
       const merged = mergeInto(primary, secondary);
-      if (primary.id !== match.id) result.delete(match.id);
+      if (primary.id !== match.id) {
+        result.delete(match.id);
+        remap.set(match.id, merged.id);
+      } else {
+        remap.set(secondary.id, merged.id);
+      }
       result.set(merged.id, merged);
       mergedCount++;
     } else {
@@ -352,7 +383,21 @@ export function mergeActivityLists(existing, incoming) {
       added++;
     }
   }
-  return { toSave: [...result.values()], added, merged: mergedCount };
+  return { toSave: [...result.values()], added, merged: mergedCount, remap };
+}
+
+// Déduplique une liste déjà en base (auto-guérison après changement de règles).
+// Retourne { toSave, removedIds, remap, merged }.
+export function dedupeList(list) {
+  // tri : sources prioritaires d'abord pour qu'elles servent de référence,
+  // puis par durée décroissante (le plus complet absorbe le plus court)
+  const ordered = [...list].sort((a, b) =>
+    (SOURCE_PRIORITY[b.source] || 0) - (SOURCE_PRIORITY[a.source] || 0)
+    || (b.movingTime || 0) - (a.movingTime || 0));
+  const { toSave, merged, remap } = mergeActivityLists([], ordered);
+  const kept = new Set(toSave.map(a => a.id));
+  const removedIds = list.map(a => a.id).filter(id => !kept.has(id));
+  return { toSave, removedIds, remap, merged };
 }
 
 // ---------- Sauvegarde de l'ancienne app runtrack ----------

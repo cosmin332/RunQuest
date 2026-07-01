@@ -84,6 +84,18 @@ export async function deleteActivity(id) {
   });
 }
 
+export async function deleteActivities(ids) {
+  if (!ids.length) return;
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction('activities', 'readwrite');
+    const s = t.objectStore('activities');
+    for (const id of ids) s.delete(id);
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+  });
+}
+
 // ---- API métriques santé ----
 // metric = { key, name, date, ...values }
 

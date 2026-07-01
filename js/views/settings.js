@@ -3,9 +3,15 @@
 // ============================================================
 
 import { el, toast, downloadJson, readFileAsText, fmtDate, isoDay } from '../utils.js';
-import { getState, setState, saveActivities, saveMetrics, exportBackup, restoreBackup, wipeAll, getActivities } from '../db.js';
-import { parseStravaArchiveCsv, parseGpx, parseHealthExport, parseRuntrackBackup, mergeActivityLists } from '../parsers.js';
+import { getState, setState, saveMetrics, exportBackup, restoreBackup, wipeAll } from '../db.js';
+import { parseStravaArchiveCsv, parseGpx, parseHealthExport, parseRuntrackBackup } from '../parsers.js';
+import { ingestActivities, dedupeStored } from '../data-import.js';
 import * as strava from '../strava.js';
+
+function ingestReport(r) {
+  return `${r.added} ajoutée${r.added > 1 ? 's' : ''}, ${r.merged} fusionnée${r.merged > 1 ? 's' : ''}`
+    + (r.removed ? `, ${r.removed} doublon${r.removed > 1 ? 's' : ''} nettoyé${r.removed > 1 ? 's' : ''}` : '');
+}
 
 export function renderSettings(root, ctx) {
   const settings = getState('settings', {});
@@ -21,12 +27,10 @@ export function renderSettings(root, ctx) {
       () => pickFile('.json', async file => {
         const json = JSON.parse(await readFileAsText(file));
         const { activities, metrics } = parseHealthExport(json);
-        const existing = await getActivities();
-        const { toSave, added, merged } = mergeActivityLists(existing, activities);
-        await saveActivities(toSave);
+        const r = await ingestActivities(activities);
         await saveMetrics(metrics);
         setState('importLog', { ...getState('importLog', {}), health: new Date().toISOString() });
-        toast(`Santé : ${added} activités ajoutées, ${merged} fusionnées, ${metrics.length} points de métriques`, 'success');
+        toast(`Santé : ${ingestReport(r)}, ${metrics.length} points de métriques`, 'success');
         ctx.refresh();
       })),
 
@@ -36,11 +40,9 @@ export function renderSettings(root, ctx) {
       () => pickFile('.csv', async file => {
         const acts = parseStravaArchiveCsv(await readFileAsText(file));
         if (!acts.length) throw new Error('Aucune activité trouvée dans ce CSV');
-        const existing = await getActivities();
-        const { toSave, added, merged } = mergeActivityLists(existing, acts);
-        await saveActivities(toSave);
+        const r = await ingestActivities(acts);
         setState('importLog', { ...getState('importLog', {}), archive: new Date().toISOString() });
-        toast(`Archive : ${added} ajoutées, ${merged} fusionnées`, 'success');
+        toast(`Archive : ${ingestReport(r)}`, 'success');
         ctx.refresh();
       })),
 
@@ -54,10 +56,8 @@ export function renderSettings(root, ctx) {
           catch (e) { console.warn(e); }
         }
         if (!acts.length) throw new Error('Aucun GPX lisible');
-        const existing = await getActivities();
-        const { toSave, added, merged } = mergeActivityLists(existing, acts);
-        await saveActivities(toSave);
-        toast(`GPX : ${added} ajoutées, ${merged} fusionnées`, 'success');
+        const r = await ingestActivities(acts);
+        toast(`GPX : ${ingestReport(r)}`, 'success');
         ctx.refresh();
       }, true)),
 
@@ -101,11 +101,9 @@ export function renderSettings(root, ctx) {
             const btn = e.target; btn.disabled = true; btn.textContent = 'Synchronisation…';
             try {
               const acts = await strava.syncActivities();
-              const existing = await getActivities();
-              const { toSave, added, merged } = mergeActivityLists(existing, acts);
-              await saveActivities(toSave);
+              const r = await ingestActivities(acts);
               setState('importLog', { ...getState('importLog', {}), api: new Date().toISOString() });
-              toast(`Strava : ${added} nouvelles activités, ${merged} fusionnées`, 'success');
+              toast(`Strava : ${ingestReport(r)}`, 'success');
               ctx.refresh();
             } catch (err) { toast(err.message, 'error', 5000); }
             finally { btn.disabled = false; btn.textContent = '🔄 Synchroniser maintenant'; }
@@ -158,6 +156,18 @@ export function renderSettings(root, ctx) {
           location.reload();
         }),
       }, '⬆️ Restaurer une sauvegarde'),
+    ),
+    el('div', { class: 'modal-actions' },
+      el('button', {
+        class: 'btn',
+        onclick: async e => {
+          const btn = e.target; btn.disabled = true;
+          const removed = await dedupeStored();
+          btn.disabled = false;
+          toast(removed ? `🧹 ${removed} doublon${removed > 1 ? 's' : ''} supprimé${removed > 1 ? 's' : ''} et séances re-liées` : 'Aucun doublon détecté ✨', 'success');
+          if (removed) ctx.refresh();
+        },
+      }, '🧹 Dédupliquer les activités'),
     ),
     el('details', { style: 'margin-top:10px' },
       el('summary', { class: 'small muted' }, 'Zone dangereuse'),

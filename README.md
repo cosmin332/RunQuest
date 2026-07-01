@@ -34,8 +34,13 @@ projections Riegel), gamification complète (XP, niveaux, badges, streaks).
 | API Strava | OAuth (Client ID/Secret dans Réglages) | sync incrémentale des nouvelles activités |
 | Ancienne app | sauvegarde runtrack `.json` | programme précédent + historique |
 
-Les activités des différentes sources sont **automatiquement dédupliquées et fusionnées**
-(même départ ±20 min → une seule activité, champs complétés entre sources).
+Les activités des différentes sources sont **automatiquement dédupliquées et fusionnées** :
+deux enregistrements dont les plages horaires se chevauchent majoritairement (montre +
+téléphone, Strava + Santé…) deviennent une seule activité, champs complétés entre sources ;
+des segments consécutifs sans chevauchement restent distincts. Une passe de nettoyage
+tourne aussi **à chaque démarrage** et après chaque import/sync (bouton manuel
+« 🧹 Dédupliquer » dans Réglages). Les séances de programme liées à une activité absorbée
+sont automatiquement re-liées à l'activité conservée.
 
 ### Sync Strava (API)
 
@@ -99,6 +104,7 @@ css/app.css           thème sport clair
 js/app.js             routeur, init, badges, callback OAuth
 js/db.js              IndexedDB + localStorage + sauvegarde globale
 js/parsers.js         CSV Strava, GPX, Santé, runtrack + fusion multi-sources
+js/data-import.js     ingestion : fusion + dédup + re-liaison des séances
 js/program-data.js    plan sub-50 encodé + format & validation d'import
 js/analytics.js       volume, TRIMP, ACWR, records, Riegel/VDOT, zones FC, efficacité
 js/gamification.js    XP (recalcul déterministe), niveaux, badges, streaks

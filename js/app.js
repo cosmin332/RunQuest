@@ -8,6 +8,7 @@ import { getActivities, getMetrics, getState, setState } from './db.js';
 import { SUB50_PROGRAM } from './program-data.js';
 import { evaluateBadges } from './gamification.js';
 import { destroyCharts } from './charts.js';
+import { dedupeStored } from './data-import.js';
 import * as strava from './strava.js';
 
 import { renderDashboard } from './views/dashboard.js';
@@ -126,6 +127,13 @@ async function init() {
       toast('Connexion Strava échouée : ' + e.message, 'error', 6000);
     }
   }
+
+  // auto-guérison : supprime les doublons d'activités qui auraient pu
+  // s'accumuler (imports multiples, anciennes règles de fusion)
+  try {
+    const removed = await dedupeStored();
+    if (removed) toast(`🧹 ${removed} doublon${removed > 1 ? 's' : ''} d'activités nettoyé${removed > 1 ? 's' : ''}`, 'success');
+  } catch (e) { console.warn('dédup au démarrage :', e); }
 
   await loadData();
   checkBadges();
