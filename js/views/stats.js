@@ -9,7 +9,8 @@ import {
   fitnessSeries, monotony, driftSeries, monthlyVdot, compare30d, monthlyRecap,
   readinessToday, gearStats, tops, insights,
 } from '../analytics.js';
-import { makeChart, PALETTE, paceAxis, paceTooltip, weekLabel } from '../charts.js';
+import { makeChart, PALETTE, paceAxis, paceTooltip, weekLabel, scatterInteraction } from '../charts.js';
+import * as A from '../analysis-text.js';
 
 const TABS = [
   { id: 'perf', label: '⚡ Performance' },
@@ -50,12 +51,22 @@ function topRow(icon, label, value, date, onclick = null) {
     el('span', { class: 'muted small' }, fmtDate(date, { day: 'numeric', month: 'short', year: '2-digit' })));
 }
 
-function chartCard(root, id, title, subtitle = null, tall = false) {
-  root.append(el('div', { class: 'card' },
+function analysisEl(a) {
+  if (!a) return null;
+  return el('div', { class: `analysis analysis-${a.tone}` },
+    el('span', { class: 'analysis-icon' }, a.tone === 'good' ? '✅' : a.tone === 'warn' ? '⚠️' : '💡'),
+    el('span', {}, a.text));
+}
+
+// analysis : { tone, text } affiché en conclusion sous le graphique (ou null).
+function chartCard(root, id, title, subtitle = null, tall = false, analysis = null) {
+  const card = el('div', { class: 'card' },
     el('div', { class: 'card-title' }, title),
     subtitle ? el('div', { class: 'muted small', style: 'margin-bottom:6px' }, subtitle) : null,
     el('div', { class: `chart-wrap ${tall ? 'tall' : ''}` }, el('canvas', { id })),
-  ));
+  );
+  if (analysis) card.append(analysisEl(analysis));
+  root.append(card);
   return document.getElementById(id);
 }
 
@@ -85,12 +96,13 @@ function renderPerf(root, ctx) {
         cmpCell('Cadence', cmp.current.cadence ? `${Math.round(cmp.current.cadence)}` : '–', delta(cmp.current.cadence, cmp.previous.cadence, false, v => Math.round(v))),
         cmpCell('D+', `${cmp.current.elev} m`, delta(cmp.current.elev, cmp.previous.elev, false, v => Math.round(v) + ' m')),
       ),
+      analysisEl(A.analyzeCompare(cmp)),
     ));
   }
 
   // Allure de toutes les sorties + tendance lissée
   const hist = paceHistory(activities, 365);
-  const c1 = chartCard(root, 'st-pace', '🏃 Allure par sortie (12 mois)', 'Chaque point = une sortie ; la ligne = moyenne glissante sur 7 sorties. Plus bas = plus rapide.', true);
+  const c1 = chartCard(root, 'st-pace', '🏃 Allure par sortie (12 mois)', 'Chaque point = une sortie ; la ligne = moyenne glissante sur 7 sorties. Plus bas = plus rapide. Tiens le doigt et glisse pour lire.', true, A.analyzePace(hist));
   makeChart(c1, {
     type: 'scatter',
     data: {
@@ -99,6 +111,7 @@ function renderPerf(root, ctx) {
           label: 'Sortie', data: hist.map((h, i) => ({ x: i, y: h.pace, meta: h })),
           backgroundColor: hist.map(h => h.km >= 8 ? PALETTE.blue : PALETTE.primary),
           pointRadius: hist.map(h => Math.min(3 + h.km / 3, 8)),
+          pointHoverRadius: hist.map(h => Math.min(5 + h.km / 3, 10)),
         },
         {
           label: 'Tendance (7 sorties)', type: 'line',
@@ -108,9 +121,10 @@ function renderPerf(root, ctx) {
       ],
     },
     options: {
+      interaction: scatterInteraction,
       scales: {
         y: paceAxis(),
-        x: { ticks: { callback: v => hist[Math.round(v)] ? fmtDate(hist[Math.round(v)].date, { month: 'short' }) : '', maxTicksLimit: 8 } },
+        x: { type: 'linear', ticks: { callback: v => hist[Math.round(v)] ? fmtDate(hist[Math.round(v)].date, { month: 'short' }) : '', maxTicksLimit: 8 } },
       },
       plugins: {
         tooltip: { callbacks: { label: c => {
@@ -124,7 +138,7 @@ function renderPerf(root, ctx) {
   // VO2max
   const vo2 = metricSeries(metrics, 'vo2_max', 540);
   if (vo2.length > 2) {
-    const c2 = chartCard(root, 'st-vo2', '🫁 VO₂max estimée (Apple Watch)', 'Objectif sub-50 ≈ 52–54. Ta base de départ plan : 53,8.');
+    const c2 = chartCard(root, 'st-vo2', '🫁 VO₂max estimée (Apple Watch)', 'Objectif sub-50 ≈ 52–54. Ta base de départ plan : 53,8.', false, A.analyzeVo2(vo2));
     makeChart(c2, {
       type: 'line',
       data: {
@@ -139,7 +153,7 @@ function renderPerf(root, ctx) {
   const eff = aerobicEfficiency(activities, ctx.settings.fcMax || 195);
   if (eff.length > 4) {
     const c3 = chartCard(root, 'st-eff', '🔋 Efficacité aérobie (footings faciles)',
-      'Mètres parcourus par minute et par battement, sur les sorties < 78 % FCmax. En hausse = ton moteur aérobie progresse.');
+      'Mètres parcourus par minute et par battement, sur les sorties < 78 % FCmax. En hausse = ton moteur aérobie progresse.', false, A.analyzeEfficiency(eff));
     makeChart(c3, {
       type: 'line',
       data: {
@@ -157,7 +171,7 @@ function renderPerf(root, ctx) {
   const drifts = driftSeries(activities, ctx.settings.fcMax || 195);
   if (drifts.length >= 4) {
     const c4 = chartCard(root, 'st-drift', '🫀 Dérive cardiaque (découplage)',
-      'FC de la 2e moitié vs 1re moitié sur les sorties régulières ≥ 25 min. < 5 % (zone verte) = base aérobie solide : tu tiendras l’allure sur la durée.');
+      'FC de la 2e moitié vs 1re moitié sur les sorties régulières ≥ 25 min. < 5 % (zone verte) = base aérobie solide : tu tiendras l’allure sur la durée.', false, A.analyzeDrift(drifts));
     makeChart(c4, {
       type: 'bar',
       data: {
@@ -179,7 +193,7 @@ function renderPerf(root, ctx) {
   const mv = monthlyVdot(activities);
   if (mv.filter(m => m.v).length >= 3) {
     const c5 = chartCard(root, 'st-vdot', '📐 VDOT mensuel (meilleure perf du mois)',
-      'Indice de forme de Daniels calculé sur ta meilleure sortie ≥ 3 km de chaque mois. Sub-50 au 10 km ≈ VDOT 40.');
+      'Indice de forme de Daniels calculé sur ta meilleure sortie ≥ 3 km de chaque mois. Sub-50 au 10 km ≈ VDOT 40.', false, A.analyzeVdot(mv));
     makeChart(c5, {
       type: 'line',
       data: {
@@ -232,7 +246,7 @@ function renderLoad(root, ctx) {
       el('div', { class: `tile ${last.tsb > -5 ? 'good' : last.tsb < -20 ? 'warn' : ''}` }, el('div', { class: 'tile-icon' }, '⚡'), el('div', { class: 'tile-value' }, (last.tsb > 0 ? '+' : '') + Math.round(last.tsb)), el('div', { class: 'tile-label' }, `Forme (TSB) — ${formLabel}`)),
     ));
     const c0 = chartCard(root, 'st-fit', '🏗️ Fitness / Fatigue / Forme (6 mois)',
-      'Modèle classique : la Fitness (charge chronique 42 j) se construit lentement ; la Fatigue (7 j) monte vite et redescend vite. Forme = Fitness − Fatigue : légèrement négative en bloc d’entraînement, positive à l’affûtage → vise +5 à +15 le jour du 10 km.', true);
+      'Modèle classique : la Fitness (charge chronique 42 j) se construit lentement ; la Fatigue (7 j) monte vite et redescend vite. Forme = Fitness − Fatigue : légèrement négative en bloc d’entraînement, positive à l’affûtage → vise +5 à +15 le jour du 10 km.', true, A.analyzeForm(fit));
     makeChart(c0, {
       type: 'line',
       data: {
@@ -248,7 +262,7 @@ function renderLoad(root, ctx) {
   }
 
   const vol = weeklyVolume(activities, 26);
-  const c1 = chartCard(root, 'st-vol', '📊 Volume & charge hebdo (26 sem.)', 'Barres = km ; ligne = charge d’entraînement (TRIMP, échelle de droite).', true);
+  const c1 = chartCard(root, 'st-vol', '📊 Volume & charge hebdo (26 sem.)', 'Barres = km ; ligne = charge d’entraînement (TRIMP, échelle de droite).', true, A.analyzeVolume(vol));
   makeChart(c1, {
     type: 'bar',
     data: {
@@ -269,7 +283,7 @@ function renderLoad(root, ctx) {
 
   const acwr = acwrSeries(activities, 90, s.fcMax || 195, s.fcRepos || 55);
   const c2 = chartCard(root, 'st-acwr', '⚖️ Ratio charge aiguë / chronique (ACWR)',
-    'Zone verte 0,8–1,3 = progression sûre. > 1,5 = risque de blessure (crucial avec tes tibias sensibles).');
+    'Zone verte 0,8–1,3 = progression sûre. > 1,5 = risque de blessure (crucial avec tes tibias sensibles).', false, A.analyzeAcwr(acwr));
   makeChart(c2, {
     type: 'line',
     data: {
@@ -302,7 +316,7 @@ function renderLoad(root, ctx) {
   // Récap mensuel
   const months = monthlyRecap(activities, 12);
   if (months.some(m => m.km > 0)) {
-    const cM = chartCard(root, 'st-months', '📅 Kilométrage mensuel (12 mois)', 'Barres = km ; ligne = dénivelé positif cumulé (échelle de droite).');
+    const cM = chartCard(root, 'st-months', '📅 Kilométrage mensuel (12 mois)', 'Barres = km ; ligne = dénivelé positif cumulé (échelle de droite).', false, A.analyzeMonthlyKm(months));
     makeChart(cM, {
       type: 'bar',
       data: {
@@ -327,7 +341,7 @@ function renderLoad(root, ctx) {
   const totalZ = zones.reduce((a, z) => a + z.seconds, 0);
   if (totalZ > 0) {
     const c3 = chartCard(root, 'st-zones', '🎨 Temps par zone FC (6 dernières semaines)',
-      'Le plan vise ~80 % en Z1–Z2 (EF « vraiment lent ») et ~20 % en Z4–Z5 (qualité).');
+      'Le plan vise ~80 % en Z1–Z2 (EF « vraiment lent ») et ~20 % en Z4–Z5 (qualité).', false, A.analyzeZones(zones));
     makeChart(c3, {
       type: 'bar',
       data: {
@@ -340,10 +354,6 @@ function renderLoad(root, ctx) {
         scales: { x: { title: { display: true, text: 'heures' } } },
       },
     });
-    const easy = (zones[0].seconds + zones[1].seconds) / totalZ;
-    root.append(el('div', { class: 'card small' },
-      `Répartition actuelle : ${Math.round(easy * 100)} % facile (Z1–Z2) / ${Math.round((1 - easy) * 100)} % intense. `
-      + (easy >= 0.75 ? '✅ Bonne polarisation, continue.' : '⚠️ Beaucoup d’intensité — ralentis tes footings EF pour protéger tes tibias.')));
   }
 }
 
@@ -375,8 +385,9 @@ function renderHealth(root, ctx) {
   if (hrvSeries.length > 10) {
     const acwr = acwrSeries(ctx.activities, 90, ctx.settings.fcMax || 195, ctx.settings.fcRepos || 55);
     const loadByDate = new Map(acwr.map(a => [a.date, a.acute]));
+    const balancePoints = hrvSeries.map(m => ({ hrv: m.qty, load: loadByDate.get(m.date) ?? null })).filter(p => p.load != null);
     const cB = chartCard(root, 'st-balance', '🔀 Charge ↔ récupération (90 j)',
-      'Barres = charge des 7 derniers jours ; ligne = HRV lissée. Si la charge monte et que la HRV plonge durablement, ton corps décroche : allège avant que les tibias ne parlent.', true);
+      'Barres = charge des 7 derniers jours ; ligne = HRV lissée. Si la charge monte et que la HRV plonge durablement, ton corps décroche : allège avant que les tibias ne parlent.', true, A.analyzeBalance(balancePoints));
     makeChart(cB, {
       type: 'bar',
       data: {
@@ -397,17 +408,17 @@ function renderHealth(root, ctx) {
   }
 
   const specs = [
-    { name: 'resting_heart_rate', id: 'st-rhr', title: '💤 FC repos', sub: 'En baisse = meilleure forme aérobie. Moyenne glissante 7 j.', color: PALETTE.pink, smooth: 7 },
-    { name: 'heart_rate_variability', id: 'st-hrv', title: '📶 Variabilité cardiaque (HRV)', sub: 'Élevée = bonne récupération. Chute brutale = fatigue/stress : allège.', color: PALETTE.blue, smooth: 7 },
-    { name: 'cardio_recovery', id: 'st-rec', title: '🔄 Récupération cardiaque (1 min)', sub: 'Baisse de FC 1 min après l’effort. > 30 bpm = très bon.', color: PALETTE.green, smooth: 5 },
-    { name: 'weight_body_mass', id: 'st-weight', title: '⚖️ Poids', sub: null, color: PALETTE.gray, smooth: 7 },
+    { name: 'resting_heart_rate', id: 'st-rhr', title: '💤 FC repos', sub: 'En baisse = meilleure forme aérobie. Moyenne glissante 7 j.', color: PALETTE.pink, smooth: 7, an: A.analyzeRhr },
+    { name: 'heart_rate_variability', id: 'st-hrv', title: '📶 Variabilité cardiaque (HRV)', sub: 'Élevée = bonne récupération. Chute brutale = fatigue/stress : allège.', color: PALETTE.blue, smooth: 7, an: A.analyzeHrv },
+    { name: 'cardio_recovery', id: 'st-rec', title: '🔄 Récupération cardiaque (1 min)', sub: 'Baisse de FC 1 min après l’effort. > 30 bpm = très bon.', color: PALETTE.green, smooth: 5, an: A.analyzeRecovery },
+    { name: 'weight_body_mass', id: 'st-weight', title: '⚖️ Poids', sub: null, color: PALETTE.gray, smooth: 7, an: A.analyzeWeight },
   ];
   let any = false;
   for (const spec of specs) {
     const data = metricSeries(metrics, spec.name, 270);
     if (data.length < 3) continue;
     any = true;
-    const canvas = chartCard(root, spec.id, spec.title, spec.sub);
+    const canvas = chartCard(root, spec.id, spec.title, spec.sub, false, spec.an ? spec.an(data) : null);
     makeChart(canvas, {
       type: 'line',
       data: {
@@ -425,7 +436,8 @@ function renderHealth(root, ctx) {
   const sleep = metricSeries(metrics, 'sleep', 60);
   if (sleep.length > 3) {
     any = true;
-    const canvas = chartCard(root, 'st-sleep', '😴 Sommeil (60 nuits)', 'Empilé : profond + paradoxal (REM) + léger. La ligne pointillée = 8 h.', true);
+    const avg = mean(sleep.map(m => m.total).filter(Boolean));
+    const canvas = chartCard(root, 'st-sleep', '😴 Sommeil (60 nuits)', 'Empilé : profond + paradoxal (REM) + léger.', true, A.analyzeSleep(avg));
     makeChart(canvas, {
       type: 'bar',
       data: {
@@ -443,8 +455,6 @@ function renderHealth(root, ctx) {
         },
       },
     });
-    const avg = mean(sleep.map(m => m.total).filter(Boolean));
-    if (avg) root.append(el('div', { class: 'card small' }, `Moyenne : ${Math.floor(avg)} h ${String(Math.round((avg % 1) * 60)).padStart(2, '0')} par nuit. ${avg >= 7.5 ? '✅ Solide pour encaisser la charge.' : '⚠️ Sous 7 h 30, la récupération (et tes tibias) trinquent.'}`));
   }
 
   if (!any) root.append(el('div', { class: 'card muted' }, 'Importe ton export Santé (Réglages) pour voir FC repos, HRV, sommeil, poids…'));
@@ -455,18 +465,18 @@ function renderHealth(root, ctx) {
 function renderTech(root, ctx) {
   const { metrics } = ctx;
   const specs = [
-    { name: 'running_speed', id: 'st-cadspeed', title: '🚀 Vitesse de course (Santé)', sub: null, color: PALETTE.primary, unit: 'km/h' },
-    { name: 'running_stride_length', id: 'st-stride', title: '📏 Longueur de foulée', sub: 'S’allonge naturellement quand la vitesse monte — ne la force jamais.', color: PALETTE.blue, unit: 'm' },
-    { name: 'running_power', id: 'st-power', title: '⚡ Puissance', sub: null, color: PALETTE.purple, unit: 'W' },
-    { name: 'running_ground_contact_time', id: 'st-gct', title: '⏱️ Temps de contact au sol', sub: 'En baisse = foulée plus réactive. Élite ≈ 200 ms, amateur 250–300 ms.', color: PALETTE.pink, unit: 'ms' },
-    { name: 'running_vertical_oscillation', id: 'st-vo', title: '↕️ Oscillation verticale', sub: 'Moins tu rebondis, moins tu gaspilles (6–9 cm = très bien).', color: PALETTE.teal, unit: 'cm' },
+    { name: 'running_speed', id: 'st-cadspeed', title: '🚀 Vitesse de course (Santé)', sub: null, color: PALETTE.primary, unit: 'km/h', an: A.analyzeSpeed },
+    { name: 'running_stride_length', id: 'st-stride', title: '📏 Longueur de foulée', sub: 'S’allonge naturellement quand la vitesse monte — ne la force jamais.', color: PALETTE.blue, unit: 'm', an: A.analyzeStride },
+    { name: 'running_power', id: 'st-power', title: '⚡ Puissance', sub: null, color: PALETTE.purple, unit: 'W', an: A.analyzePower },
+    { name: 'running_ground_contact_time', id: 'st-gct', title: '⏱️ Temps de contact au sol', sub: 'En baisse = foulée plus réactive. Élite ≈ 200 ms, amateur 250–300 ms.', color: PALETTE.pink, unit: 'ms', an: A.analyzeGct },
+    { name: 'running_vertical_oscillation', id: 'st-vo', title: '↕️ Oscillation verticale', sub: 'Moins tu rebondis, moins tu gaspilles (6–9 cm = très bien).', color: PALETTE.teal, unit: 'cm', an: A.analyzeVertOsc },
   ];
   let any = false;
   for (const spec of specs) {
     const data = metricSeries(metrics, spec.name, 365);
     if (data.length < 3) continue;
     any = true;
-    const canvas = chartCard(root, spec.id, spec.title, spec.sub);
+    const canvas = chartCard(root, spec.id, spec.title, spec.sub, false, spec.an ? spec.an(data) : null);
     makeChart(canvas, {
       type: 'line',
       data: {
@@ -484,7 +494,7 @@ function renderTech(root, ctx) {
   const runs = runsOnly(ctx.activities).filter(a => a.cadence && a.cadence > 120).sort((a, b) => new Date(a.date) - new Date(b.date));
   if (runs.length > 4) {
     any = true;
-    const canvas = chartCard(root, 'st-cadence', '👟 Cadence par sortie', 'Cible générale : 170–180 pas/min. Une cadence plus haute réduit l’impact sur les tibias.');
+    const canvas = chartCard(root, 'st-cadence', '👟 Cadence par sortie', 'Cible générale : 170–180 pas/min. Une cadence plus haute réduit l’impact sur les tibias.', false, A.analyzeCadence(mean(runs.slice(-15).map(a => a.cadence))));
     makeChart(canvas, {
       type: 'line',
       data: {
@@ -505,7 +515,7 @@ function renderTech(root, ctx) {
   if (cadPace.length >= 8) {
     any = true;
     const canvas = chartCard(root, 'st-cadpace', '🔗 Cadence vs allure',
-      'Chaque point = une sortie. La cadence doit monter quand tu accélères (vers la droite = plus rapide). Si elle stagne à haute vitesse, tu allonges trop la foulée : plus d’impact tibial.');
+      'Chaque point = une sortie. La cadence doit monter quand tu accélères (vers la droite = plus rapide). Si elle stagne à haute vitesse, tu allonges trop la foulée : plus d’impact tibial.', false, A.analyzeCadencePace(cadPace));
     makeChart(canvas, {
       type: 'scatter',
       data: {
@@ -514,15 +524,17 @@ function renderTech(root, ctx) {
           data: cadPace.map(p => ({ x: -p.pace, y: p.cad, meta: p })),
           backgroundColor: PALETTE.blue,
           pointRadius: cadPace.map(p => Math.min(3 + p.km / 3, 8)),
+          pointHoverRadius: cadPace.map(p => Math.min(5 + p.km / 3, 10)),
         }],
       },
       options: {
+        interaction: scatterInteraction,
         plugins: {
           legend: { display: false },
           tooltip: { callbacks: { label: c => ` ${fmtDate(c.raw.meta.date)} · ${fmtPace(c.raw.meta.pace)} · ${c.raw.meta.cad} pas/min` } },
         },
         scales: {
-          x: { ticks: { callback: v => fmtPace(-v, '') }, title: { display: true, text: 'allure (→ plus rapide)' } },
+          x: { type: 'linear', ticks: { callback: v => fmtPace(-v, '') }, title: { display: true, text: 'allure (→ plus rapide)' } },
           y: { title: { display: true, text: 'pas/min' } },
         },
       },
@@ -543,7 +555,7 @@ function renderTech(root, ctx) {
     if (eco.length > 5) {
       any = true;
       const canvas = chartCard(root, 'st-eco', '🌱 Économie de course',
-        'Vitesse produite par watt de puissance (jours de course). En hausse = tu transformes mieux ton énergie en vitesse : foulée plus économique.');
+        'Vitesse produite par watt de puissance (jours de course). En hausse = tu transformes mieux ton énergie en vitesse : foulée plus économique.', false, A.analyzeEconomy(eco));
       makeChart(canvas, {
         type: 'line',
         data: {
@@ -606,8 +618,16 @@ function renderRecords(root, ctx) {
   // Courbe des records : meilleure allure tenue par distance
   const withBest = recs.filter(r => r.best);
   if (withBest.length >= 3) {
+    let recAnalysis = null;
+    const b35 = withBest.find(r => r.key === '3k+'), b812 = withBest.find(r => r.key === '8k+');
+    if (b35 && b812) {
+      const gap = paceOf(b812.best.distance, b812.best.movingTime) - paceOf(b35.best.distance, b35.best.movingTime);
+      if (gap < 25) recAnalysis = A.box('good', `Courbe très plate (${Math.round(gap)} s/km entre 3–5 km et 8–12 km) : excellente endurance, ton allure 10 km est proche de ta vitesse pure. Le sub-50 se joue surtout sur la gestion de départ et le mental.`);
+      else if (gap < 55) recAnalysis = A.box('info', `Écart de ${Math.round(gap)} s/km entre le court et le long : normal. Le seuil et les sorties longues le resserreront encore.`);
+      else recAnalysis = A.box('warn', `Gros écart (${Math.round(gap)} s/km) entre ta vitesse courte et ton allure longue : c'est l'endurance qui te limite, pas la vitesse pure. Priorise le volume lent et les sorties longues.`);
+    }
     const cR = chartCard(root, 'st-reccurve', '📉 Courbe des records',
-      'Ta meilleure allure tenue selon la distance. Plus la courbe est plate, plus ton endurance est bonne ; l’écart entre 3–5 km et 8–12 km montre ta marge sur 10 km.');
+      'Ta meilleure allure tenue selon la distance. Plus la courbe est plate, plus ton endurance est bonne ; l’écart entre 3–5 km et 8–12 km montre ta marge sur 10 km.', false, recAnalysis);
     makeChart(cR, {
       type: 'line',
       data: {

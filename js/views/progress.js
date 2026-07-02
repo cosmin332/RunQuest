@@ -11,6 +11,13 @@ import { records, tops } from '../analytics.js';
 import { makeChart, PALETTE } from '../charts.js';
 import { SESSION_TYPES } from '../program-data.js';
 
+function analysisEl(a) {
+  if (!a) return null;
+  return el('div', { class: `analysis analysis-${a.tone}` },
+    el('span', { class: 'analysis-icon' }, a.tone === 'good' ? '✅' : a.tone === 'warn' ? '⚠️' : '💡'),
+    el('span', {}, a.text));
+}
+
 function trophy(icon, label, value, date, onclick = null) {
   return el('div', { class: `trophy ${onclick ? 'clickable' : ''}`, onclick },
     el('div', { class: 'trophy-icon' }, icon),
@@ -74,7 +81,14 @@ export function renderProgress(root, ctx) {
         scales: { x: { ticks: { maxTicksLimit: 7 } } },
       },
     });
-    // repères de niveaux atteints
+    // conclusion : rythme récent de gain d'XP
+    const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+    const past = timeline.filter(t => t.date < cutoff).at(-1)?.xp || 0;
+    const gained = xp - past;
+    root.lastChild.append(analysisEl(
+      gained >= 200 ? { tone: 'good', text: `+${gained} XP sur 2 semaines : tu es à fond, ta courbe grimpe fort. Continue de valider tes séances, chaque semaine complète vaut +100 XP bonus.` }
+        : gained > 0 ? { tone: 'info', text: `+${gained} XP sur 2 semaines. Valide tes séances de la semaine et tes 2 renfos pour accélérer — les semaines complètes rapportent gros.` }
+        : { tone: 'warn', text: `Aucun XP gagné depuis 2 semaines. Relance-toi avec une séance facile aujourd'hui : le plus dur, c'est de repartir.` }));
     const reached = LEVELS.filter(l => l.xp > 0 && xp >= l.xp);
     if (reached.length) {
       root.lastChild.append(el('div', { class: 'muted small', style: 'margin-top:6px' },

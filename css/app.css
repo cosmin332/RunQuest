@@ -176,6 +176,26 @@ h2 { font-size: 1.15rem; }
 /* ---------- Graphiques ---------- */
 .chart-wrap { position: relative; height: 210px; }
 .chart-wrap.tall { height: 260px; }
+/* Lecture tactile : pas de menu copier/coller iOS, scroll vertical conservé,
+   le glissement horizontal pilote la barre de lecture du graphique. */
+.chart-wrap canvas {
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* ---------- Conclusion/analyse sous les graphiques ---------- */
+.analysis {
+  display: flex; gap: 8px; align-items: flex-start;
+  margin-top: 10px; padding: 9px 11px; border-radius: 10px;
+  font-size: .8rem; line-height: 1.45;
+  border-left: 3px solid var(--gray);
+}
+.analysis-icon { font-size: .95rem; flex-shrink: 0; }
+.analysis-good { background: #ecfdf5; border-left-color: var(--green); }
+.analysis-warn { background: #fff7ed; border-left-color: var(--primary); }
+.analysis-info { background: var(--bg); border-left-color: var(--blue); }
 
 /* ---------- Programme ---------- */
 .prog-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
