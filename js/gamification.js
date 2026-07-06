@@ -38,8 +38,12 @@ export function allSessions(program) {
 }
 
 export function sessionDate(program, week, session) {
+  // décalage manuel/intelligent éventuel (voir reschedule.js)
+  if (session.plannedDate) return new Date(session.plannedDate + 'T12:00:00');
   const start = mondayOf(new Date(program.startDate + 'T12:00:00'));
-  return addDays(start, (week.num - 1) * 7 + session.day);
+  const d = addDays(start, (week.num - 1) * 7 + session.day);
+  d.setHours(12, 0, 0, 0); // midi : évite les demi-journées dans les calculs de retard
+  return d;
 }
 
 export function weekComplete(week) {

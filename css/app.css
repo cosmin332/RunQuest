@@ -201,6 +201,15 @@ h2 { font-size: 1.15rem; }
 .prog-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .prog-toolbar select { flex: 1; min-width: 140px; width: auto; }
 .prog-head-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.head-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.shift-chip { color: var(--purple); font-weight: 700; }
+.shift-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.shift-row { display: flex; align-items: center; gap: 8px; font-size: .78rem; }
+.shift-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.shift-dates { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+.auto-shift-opt { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--muted); margin-top: 10px; cursor: pointer; }
+.reschedule-opt { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.ro-title { font-weight: 700; font-size: .88rem; margin-bottom: 3px; }
 .prog-progress { margin: 10px 0 8px; font-size: .75rem; color: var(--muted); }
 .paces { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .pace-chip {

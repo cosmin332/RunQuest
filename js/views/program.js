@@ -6,7 +6,11 @@
 import { el, fmtKm, fmtPace, fmtDuration, fmtDate, paceOf, toast, confetti, isoDay, downloadJson, readFileAsText } from '../utils.js';
 import { SESSION_TYPES, validateProgram } from '../program-data.js';
 import { sessionDate, weekComplete, programStats, allSessions } from '../gamification.js';
-import { setState } from '../db.js';
+import { setState, getState } from '../db.js';
+import {
+  completionDelay, shiftIsUseful, proposeWeekShift, applyShift,
+  reanchorFrom, resetDates, goalSession,
+} from '../reschedule.js';
 
 export function renderProgram(root, ctx) {
   const { programs } = ctx;
@@ -47,14 +51,20 @@ export function renderProgram(root, ctx) {
         el('h2', {}, program.name),
         el('div', { class: 'muted small' }, `${program.objective || ''} · début ${fmtDate(program.startDate, { day: 'numeric', month: 'long', year: 'numeric' })}`),
       ),
-      el('button', {
-        class: 'btn btn-ghost small', title: 'Changer la date de début (lundi de la semaine 1)',
-        onclick: () => {
-          const d = prompt('Date de début (lundi de la semaine 1), format AAAA-MM-JJ :', program.startDate);
-          if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) { program.startDate = d; persist(ctx); ctx.refresh(); }
-          else if (d) toast('Format attendu : AAAA-MM-JJ', 'error');
-        },
-      }, '📆'),
+      el('div', { class: 'head-actions' },
+        el('button', {
+          class: 'btn btn-ghost small', title: 'Replanifier (rattraper un retard, remettre les dates d’origine)',
+          onclick: () => openRescheduleMenu(program, ctx),
+        }, '🗓️'),
+        el('button', {
+          class: 'btn btn-ghost small', title: 'Changer la date de début (lundi de la semaine 1)',
+          onclick: () => {
+            const d = prompt('Date de début (lundi de la semaine 1), format AAAA-MM-JJ :', program.startDate);
+            if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) { program.startDate = d; persist(ctx); ctx.refresh(); }
+            else if (d) toast('Format attendu : AAAA-MM-JJ', 'error');
+          },
+        }, '📆'),
+      ),
     ),
     el('div', { class: 'prog-progress' },
       el('div', { class: 'prog-bar' }, el('div', { style: `width:${Math.round(stats.completion * 100)}%` })),
@@ -130,7 +140,7 @@ function sessionRow(session, week, program, ctx) {
 
   const row = el('div', { class: `session ${session.completed ? 'session-done' : ''}` },
     el('div', { class: 'session-head', onclick: () => body.classList.toggle('open') },
-      el('span', { class: 'session-day' }, DAY_NAMES[session.day] || '?'),
+      el('span', { class: 'session-day' }, DAY_NAMES[(date.getDay() + 6) % 7] || '?'),
       el('span', { class: 'type-pill', style: `background:${type.color}` }, type.label),
       el('div', { class: 'session-title' },
         session.title, session.optional ? el('span', { class: 'opt-chip' }, 'optionnelle') : null),
@@ -143,6 +153,7 @@ function sessionRow(session, week, program, ctx) {
     ),
     el('div', { class: 'session-sub' },
       `${fmtDate(date)}`,
+      session.plannedDate && !session.completed ? el('span', { class: 'shift-chip', title: 'Date décalée par la replanification' }, ' ↦ décalée') : '',
       session.estKm ? ` · ~${session.estKm} km` : '', session.estMin ? ` · ~${session.estMin} min` : '',
       linked ? el('span', { class: 'linked-chip', onclick: () => ctx.navigate('activities', { activityId: linked.id }) }, ` 🔗 ${linked.name}`) : '',
     ),
@@ -231,7 +242,7 @@ function openValidation(session, week, program, ctx) {
     close();
     confetti();
     toast(`+${type.xp} XP — ${session.title} validée ! 💪`, 'success');
-    ctx.refresh();
+    maybeProposeShift(program, week, session, ctx);
   };
 
   if (needsActivity) {
@@ -307,6 +318,150 @@ function matchScore(a, session, plannedDate) {
 
 function persist(ctx) {
   setState('programs', ctx.programs);
+}
+
+// ---------- Replanification intelligente ----------
+
+// Après une validation en retard : propose de décaler le reste de la semaine
+// pour préserver les 48 h entre séances de qualité (si c'est réellement utile).
+function maybeProposeShift(program, week, session, ctx) {
+  const delay = completionDelay(program, week, session);
+  if (delay >= 1 && shiftIsUseful(program, week, session, delay)) {
+    const changes = proposeWeekShift(program, week, session, delay);
+    if (changes.length) {
+      if (getState('settings', {}).autoShift) {
+        applyShift(changes);
+        persist(ctx);
+        toast(`Suite de la semaine décalée de ${delay} j pour garder 48 h de récup 🗓️`, 'success');
+        ctx.refresh();
+        return;
+      }
+      ctx.refresh();
+      openShiftModal(program, delay, changes, ctx);
+      return;
+    }
+  }
+  ctx.refresh();
+}
+
+function openShiftModal(program, delay, changes, ctx) {
+  const overlay = el('div', { class: 'modal-overlay', onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  const modal = el('div', { class: 'modal' });
+  overlay.append(modal);
+  const close = () => overlay.remove();
+  const spill = changes.some(c => c.spillsNextWeek);
+
+  const auto = el('input', { type: 'checkbox' });
+
+  modal.append(
+    el('div', { class: 'modal-head' },
+      el('h3', {}, '🗓️ Décaler la suite de la semaine ?'),
+      el('button', { class: 'btn-close', onclick: close }, '×')),
+    el('p', { class: 'small' },
+      `Tu as fait cette séance avec ${delay} jour${delay > 1 ? 's' : ''} de retard. `
+      + `Pour garder au moins 48 h avant ta prochaine séance de qualité, je peux décaler `
+      + `les ${changes.length} séance${changes.length > 1 ? 's' : ''} suivante${changes.length > 1 ? 's' : ''} de cette semaine de ${delay} jour${delay > 1 ? 's' : ''}. `
+      + `Ta date d'objectif ne bouge pas.`),
+    el('div', { class: 'shift-list' },
+      ...changes.map(c => el('div', { class: 'shift-row' },
+        el('span', { class: 'type-pill', style: `background:${(SESSION_TYPES[c.type] || SESSION_TYPES.ef).color}` }, (SESSION_TYPES[c.type] || SESSION_TYPES.ef).label),
+        el('span', { class: 'shift-title' }, c.title),
+        el('span', { class: 'shift-dates' }, `${fmtDate(c.fromIso, { weekday: 'short', day: 'numeric', month: 'short' })} → ${fmtDate(c.toIso, { weekday: 'short', day: 'numeric', month: 'short' })}`),
+      ))),
+    spill ? el('div', { class: 'late-note' }, '⚠️ Certaines séances passent sur la semaine suivante. Vérifie qu’elles ne collent pas à ta prochaine qualité.') : null,
+    el('label', { class: 'auto-shift-opt' }, auto, el('span', {}, 'Toujours décaler automatiquement (ne plus me demander)')),
+    el('div', { class: 'modal-actions' },
+      el('button', { class: 'btn btn-ghost', onclick: close }, 'Laisser tel quel'),
+      el('button', {
+        class: 'btn btn-primary',
+        onclick: () => {
+          applyShift(changes);
+          if (auto.checked) setState('settings', { ...getState('settings', {}), autoShift: true });
+          persist(ctx);
+          close();
+          toast('Suite de la semaine décalée 🗓️', 'success');
+          ctx.refresh();
+        },
+      }, `Décaler de ${delay} j`),
+    ),
+  );
+  document.body.append(overlay);
+}
+
+function openRescheduleMenu(program, ctx) {
+  const overlay = el('div', { class: 'modal-overlay', onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  const modal = el('div', { class: 'modal' });
+  overlay.append(modal);
+  const close = () => overlay.remove();
+
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  // prochaine séance due (non validée) et son retard éventuel
+  const upcoming = program.weeks
+    .flatMap(w => w.sessions.filter(s => !s.completed).map(s => ({ s, w, date: sessionDate(program, w, s) })))
+    .sort((a, b) => a.date - b.date)[0];
+  const overdueDays = upcoming ? Math.round((today - upcoming.date) / 86400000) : 0;
+  const hasShifts = program.weeks.some(w => w.sessions.some(s => s.plannedDate));
+
+  const goal = goalSession(program);
+  const goalDateNow = goal ? sessionDate(program, goal.w, goal.s) : null;
+
+  modal.append(
+    el('div', { class: 'modal-head' },
+      el('h3', {}, '🗓️ Replanifier le programme'),
+      el('button', { class: 'btn-close', onclick: close }, '×')),
+    el('p', { class: 'small muted' },
+      'Le décalage intelligent gère déjà les petits retards semaine par semaine (48 h entre séances dures) sans toucher à ton objectif. '
+      + 'Utilise le recalage global seulement après un vrai trou (maladie, voyage).'),
+  );
+
+  if (upcoming && overdueDays >= 1) {
+    const { changes, delta } = reanchorFrom(program, isoDay(today));
+    const newGoal = goal ? changes.find(c => c.session === goal.s) : null;
+    modal.append(el('div', { class: 'reschedule-opt' },
+      el('div', { class: 'ro-title' }, `⏩ Rattraper le retard`),
+      el('div', { class: 'small muted' },
+        `Ta prochaine séance (${upcoming.s.title}) était prévue il y a ${overdueDays} j. `
+        + `Recaler toute la suite pour qu'elle tombe aujourd'hui.`
+        + (newGoal && goalDateNow ? ` Objectif : ${fmtDate(goalDateNow, { day: 'numeric', month: 'short' })} → ${fmtDate(newGoal.toIso, { day: 'numeric', month: 'short' })}.` : '')),
+      el('button', {
+        class: 'btn btn-primary full', style: 'margin-top:8px',
+        onclick: () => {
+          applyShift(changes);
+          persist(ctx);
+          close();
+          toast(`Programme recalé de ${delta} j à partir d'aujourd'hui`, 'success');
+          ctx.refresh();
+        },
+      }, `Recaler à partir d'aujourd'hui (+${delta} j)`),
+    ));
+  } else {
+    modal.append(el('div', { class: 'reschedule-opt' },
+      el('div', { class: 'small muted' }, '✅ Aucun retard à rattraper : ta prochaine séance est à jour.')));
+  }
+
+  if (hasShifts) {
+    modal.append(el('div', { class: 'reschedule-opt' },
+      el('div', { class: 'ro-title' }, '↩️ Remettre les dates d’origine'),
+      el('div', { class: 'small muted' }, 'Annule tous les décalages et revient au calendrier initial du plan.'),
+      el('button', {
+        class: 'btn full', style: 'margin-top:8px',
+        onclick: () => {
+          const n = resetDates(program);
+          persist(ctx);
+          close();
+          toast(n ? `${n} date(s) remise(s) à l'origine` : 'Aucun décalage', 'success');
+          ctx.refresh();
+        },
+      }, 'Remettre les dates d’origine'),
+    ));
+  }
+
+  const autoOn = !!getState('settings', {}).autoShift;
+  modal.append(el('label', { class: 'auto-shift-opt', style: 'margin-top:12px' },
+    (() => { const c = el('input', { type: 'checkbox' }); c.checked = autoOn; c.addEventListener('change', () => setState('settings', { ...getState('settings', {}), autoShift: c.checked })); return c; })(),
+    el('span', {}, 'Décaler automatiquement la semaine en cas de retard (sans me demander)')));
+
+  document.body.append(overlay);
 }
 
 // ---------- Import de programmes ----------

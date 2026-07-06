@@ -81,6 +81,27 @@ Bouton **❓ Format** dans l'onglet Programme (exemple téléchargeable). Résum
 
 Donne ce format à ton coach (ou à Claude) pour générer tes futurs plans : import en un clic.
 
+## Replanification intelligente
+
+Si tu réalises une séance un autre jour que prévu, RunQuest protège l'**espacement**
+(≥ 48 h entre deux séances de qualité, pas deux jours durs d'affilée) plutôt que de
+décaler bêtement tout le plan :
+
+- **Décalage local automatique** : à la validation d'une séance en retard, si — et
+  seulement si — cela crée un vrai conflit (une séance de qualité passe à moins de 48 h,
+  ou deux séances tombent le même jour), l'app propose de décaler le reste de la *semaine
+  en cours*. La date d'objectif ne bouge pas et le plan ne « gonfle » pas. Un retard qui
+  n'affecte rien (ex. 1 jour sur une séance isolée) ne déclenche aucun décalage inutile.
+  Activable en automatique (case « Toujours décaler ») ou à confirmer à chaque fois.
+- **Recalage global manuel** (bouton 🗓️ dans l'en-tête du programme) : pour les vrais
+  trous (maladie, voyage), recale toute la suite à partir d'aujourd'hui — l'app affiche
+  l'impact sur la date d'objectif avant de valider.
+- **Retour aux dates d'origine** : annule tous les décalages en un clic.
+
+> Pourquoi pas un décalage global à chaque retard ? Parce qu'un jour de retard répété
+> ferait dériver la date d'objectif et gonfler le plan de 10 semaines. Ce qui compte
+> vraiment tient sur quelques jours (récup entre séances dures) : c'est ça qu'on protège.
+
 ## Sauvegarde
 
 Réglages → *Exporter la sauvegarde* : un JSON complet (activités, métriques, programmes,
