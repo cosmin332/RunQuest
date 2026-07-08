@@ -108,16 +108,27 @@ function normalizeApiActivity(a) {
   };
 }
 
-// Récupère les activités depuis la dernière sync (ou 1 an par défaut).
+// Récupère les activités récentes. Fenêtre large et chevauchante (30 jours par
+// défaut) : le paramètre `after` de Strava filtre sur la DATE DE DÉBUT, donc une
+// activité mise en ligne en différé ou antidatée peut avoir une date antérieure
+// à la dernière sync. On re-télécharge largement — la déduplication évite les
+// doublons — pour ne jamais rater la dernière activité.
+const RECENT_WINDOW_S = 30 * 86400;
+const FIRST_WINDOW_S = 365 * 86400;
+
 export async function syncActivities() {
   const token = await freshToken();
   const t = getState('strava', {});
-  const after = t.lastSync ? Math.floor(t.lastSync / 1000) - 3600 : Math.floor(Date.now() / 1000) - 365 * 86400;
+  const nowS = Math.floor(Date.now() / 1000);
+  const after = t.lastSync
+    ? Math.min(Math.floor(t.lastSync / 1000) - RECENT_WINDOW_S, nowS - RECENT_WINDOW_S)
+    : nowS - FIRST_WINDOW_S;
   const all = [];
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= 15; page++) {
     const res = await fetch(`${API}/athlete/activities?after=${after}&per_page=100&page=${page}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    if (res.status === 401) throw new Error('Session Strava expirée — reconnecte ton compte dans Réglages');
     if (res.status === 429) throw new Error('Limite de requêtes Strava atteinte, réessaie dans 15 min');
     if (!res.ok) throw new Error(`Erreur API Strava (${res.status})`);
     const batch = await res.json();
@@ -125,7 +136,8 @@ export async function syncActivities() {
     if (batch.length < 100) break;
   }
   setState('strava', { ...getState('strava', {}), lastSync: Date.now() });
-  return all.map(normalizeApiActivity);
+  // du plus récent au plus ancien
+  return all.map(normalizeApiActivity).sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
 export function disconnect() {

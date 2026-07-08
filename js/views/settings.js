@@ -101,9 +101,15 @@ export function renderSettings(root, ctx) {
             const btn = e.target; btn.disabled = true; btn.textContent = 'Synchronisation…';
             try {
               const acts = await strava.syncActivities();
-              const r = await ingestActivities(acts);
-              setState('importLog', { ...getState('importLog', {}), api: new Date().toISOString() });
-              toast(`Strava : ${ingestReport(r)}`, 'success');
+              if (!acts.length) {
+                toast('Strava n’a renvoyé aucune activité sur la période. Si ta dernière sortie est très récente, laisse-lui quelques minutes puis réessaie.', 'info', 6000);
+              } else {
+                const r = await ingestActivities(acts);
+                const newest = acts[0];
+                const tail = newest ? ` · dernière : « ${newest.name} » (${fmtDate(newest.date)})` : '';
+                setState('importLog', { ...getState('importLog', {}), api: new Date().toISOString() });
+                toast(`Strava : ${ingestReport(r)}${tail}`, 'success', 5000);
+              }
               ctx.refresh();
             } catch (err) { toast(err.message, 'error', 5000); }
             finally { btn.disabled = false; btn.textContent = '🔄 Synchroniser maintenant'; }
