@@ -35,12 +35,12 @@ const state = {
 };
 
 function seedPrograms() {
+  // Ne sème le plan intégré qu'au tout premier lancement (aucune donnée).
+  // Ensuite on respecte les choix de l'utilisateur : s'il supprime un programme,
+  // il ne doit pas réapparaître.
   let programs = getState('programs', null);
-  if (!programs) {
+  if (programs === null) {
     programs = [structuredClone(SUB50_PROGRAM)];
-    setState('programs', programs);
-  } else if (!programs.some(p => p.id === SUB50_PROGRAM.id)) {
-    programs.unshift(structuredClone(SUB50_PROGRAM));
     setState('programs', programs);
   }
   return programs;

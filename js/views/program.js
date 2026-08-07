@@ -64,6 +64,10 @@ export function renderProgram(root, ctx) {
             else if (d) toast('Format attendu : AAAA-MM-JJ', 'error');
           },
         }, '📆'),
+        el('button', {
+          class: 'btn btn-ghost small', title: 'Supprimer ce programme',
+          onclick: () => deleteProgram(program, ctx),
+        }, '🗑️'),
       ),
     ),
     el('div', { class: 'prog-progress' },
@@ -159,9 +163,13 @@ function sessionRow(session, week, program, ctx) {
     ),
   );
 
+  const segs = (session.segments || []).filter(seg => segmentLabel(seg));
+  const note = session.notes || session.note;
   const body = el('div', { class: 'session-body' },
-    el('ul', { class: 'segments' }, ...(session.segments || []).map(seg => el('li', { class: `seg seg-${seg.k}` }, segmentLabel(seg)))),
-    session.notes ? el('div', { class: 'session-notes' }, `💡 ${session.notes}`) : null,
+    segs.length
+      ? el('ul', { class: 'segments' }, ...segs.map(seg => el('li', { class: `seg seg-${seg.k}` }, segmentLabel(seg))))
+      : (session.type === 'repos' ? el('div', { class: 'seg seg-rest' }, 'Repos complet — la récupération fait partie de l’entraînement') : null),
+    note ? el('div', { class: 'session-notes' }, `💡 ${note}`) : null,
     session.completed && session.actual
       ? el('div', { class: 'session-actual' },
           `✅ Réalisé${session.completedAt ? ` le ${fmtDate(session.completedAt)}` : ''} : `
@@ -179,12 +187,14 @@ function segmentLabel(seg) {
   switch (seg.k) {
     case 'wu': return `Échauffement ${seg.min} min${seg.pace ? ` (${seg.pace})` : ''}`;
     case 'cd': return `Retour au calme ${seg.min} min`;
-    case 'int': return `${seg.reps} × ${seg.dist} m à ${seg.pace}/km — récup ${seg.rec}`;
+    case 'int': return `${seg.reps} × ${seg.dist} m à ${seg.pace}/km${seg.rec ? ` — récup ${seg.rec}` : ''}`;
     case 'steady': return `${seg.label ? seg.label + ' — ' : ''}${seg.min ? seg.min + ' min' : ''}${seg.pace ? ` à ${seg.pace}${/[:\d]$/.test(seg.pace) ? '/km' : ''}` : ''}`;
-    case 'strides': return `${seg.n} lignes droites (~80 m, en accélération progressive)`;
+    case 'strides': return `${seg.reps || seg.n} lignes droites (~80 m, en accélération progressive)`;
+    case 'skipping': return `Skipping ${seg.reps || 2}×${seg.sec || 30} s (montées de genoux dynamiques)`;
+    case 'race': return `${((seg.dist || 10000) / 1000).toLocaleString('fr-FR')} km chronométrés${seg.target ? ` — objectif ${seg.target}` : ''}`;
     case 'drill': return seg.label;
     case 'rest': return 'Repos complet — la récupération fait partie de l’entraînement';
-    default: return JSON.stringify(seg);
+    default: return seg.label || '';
   }
 }
 
@@ -318,6 +328,15 @@ function matchScore(a, session, plannedDate) {
 
 function persist(ctx) {
   setState('programs', ctx.programs);
+}
+
+function deleteProgram(program, ctx) {
+  if (!confirm(`Supprimer le programme « ${program.name} » ?\nSon avancement (séances validées, XP lié) sera perdu.\nPense à faire une sauvegarde avant si besoin (Réglages).`)) return;
+  const idx = ctx.programs.findIndex(p => p.id === program.id);
+  if (idx >= 0) ctx.programs.splice(idx, 1);
+  persist(ctx);
+  toast('Programme supprimé', 'success');
+  ctx.navigate('program', {});
 }
 
 // ---------- Replanification intelligente ----------
@@ -475,20 +494,33 @@ function importProgramFile(ctx) {
       const json = JSON.parse(await readFileAsText(file));
       const list = json.programs || (json.weeks ? [json] : null);
       if (!list) throw new Error('Attendu : { "programs": [...] } ou un programme seul');
-      let added = 0;
       for (const p of list) {
         const errors = validateProgram(p);
         if (errors.length) throw new Error(`Programme « ${p.name || p.id} » invalide :\n– ${errors.slice(0, 5).join('\n– ')}`);
+      }
+      const importedIds = new Set(list.map(p => p.id));
+      const others = ctx.programs.filter(p => !importedIds.has(p.id));
+      // propose de repartir sur une base propre (répond à « supprime les anciens »)
+      const replaceAll = others.length > 0
+        && confirm(`Importer ${list.length} programme(s) et SUPPRIMER les ${others.length} autre(s) programme(s) existant(s) ?\n\nOK = repartir uniquement sur le(s) nouveau(x) plan(s).\nAnnuler = garder aussi les anciens.`);
+      let added = 0;
+      for (const p of list) {
         const idx = ctx.programs.findIndex(x => x.id === p.id);
         if (idx >= 0) {
-          if (!confirm(`Le programme « ${p.name} » existe déjà. Le remplacer ? (l'avancement sera perdu)`)) continue;
+          if (!replaceAll && !confirm(`Le programme « ${p.name} » existe déjà. Le remplacer ? (l'avancement sera perdu)`)) continue;
           ctx.programs[idx] = p;
         } else ctx.programs.push(p);
         added++;
       }
+      if (replaceAll) {
+        for (const o of others) {
+          const i = ctx.programs.findIndex(x => x.id === o.id);
+          if (i >= 0) ctx.programs.splice(i, 1);
+        }
+      }
       persist(ctx);
-      toast(`${added} programme(s) importé(s) 🎉`, 'success');
-      ctx.refresh();
+      toast(replaceAll ? `${added} programme(s) importé(s), anciens supprimés 🎉` : `${added} programme(s) importé(s) 🎉`, 'success');
+      ctx.navigate('program', { programId: list[0].id });
     } catch (e) {
       alert('Import impossible : ' + e.message);
     }
