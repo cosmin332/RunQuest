@@ -43,13 +43,17 @@ function build(root, ctx, logs) {
   const existing = session.workoutId ? logs.find(l => l.id === session.workoutId) : null;
   const model = (session.exercises || []).map((ex, i) => {
     const saved = existing?.exercises?.[i];
-    const nSets = saved?.sets?.length || ex.sets || 3;
+    const info = ex.info || (ex.sets == null && (ex.reps == null || ex.reps === ''));
+    const nSets = info ? 0 : (saved?.sets?.length || ex.sets || 3);
     return {
       name: ex.name,
       targetSets: ex.sets || nSets,
       targetReps: ex.reps ?? '',
       rest: ex.rest || DEFAULT_REST,
       notes: ex.notes || '',
+      rpe: ex.rpe || null,
+      youtubeId: ex.youtubeId || null,
+      info,
       sets: Array.from({ length: nSets }, (_, k) => ({
         weight: saved?.sets?.[k]?.weight ?? null,
         reps: saved?.sets?.[k]?.reps ?? null,
@@ -80,21 +84,32 @@ function build(root, ctx, logs) {
 
   // --- Cartes exercices ---
   model.forEach((ex, exIdx) => {
-    const last = lastForExercise(logs.filter(l => l.id !== existing?.id), ex.name);
     const card = el('div', { class: 'card ex-card' });
+    const targetTxt = ex.info ? 'circuit' : `${ex.targetSets} × ${ex.targetReps || '?'}${ex.rpe ? ` @ RPE ${ex.rpe}` : ''}`;
     card.append(
       el('div', { class: 'ex-head' },
         el('div', { class: 'ex-name' }, ex.name),
-        el('div', { class: 'ex-target' }, `${ex.targetSets} × ${ex.targetReps || '?'}`),
+        el('div', { class: 'ex-target' }, targetTxt),
       ),
     );
+    if (ex.youtubeId) {
+      card.append(el('button', { class: 'video-link', onclick: () => window.open(`https://www.youtube.com/watch?v=${ex.youtubeId}`, '_blank', 'noopener') }, '▶ Voir la démo vidéo'));
+    }
+
+    if (ex.info) {
+      // exercice « circuit / AMRAP » : pas de charges à logger, on garde la consigne
+      if (ex.notes) card.append(el('div', { class: 'ex-notes' }, ex.notes));
+      root.append(card);
+      return;
+    }
+
+    const last = lastForExercise(logs.filter(l => l.id !== existing?.id), ex.name);
     if (last) {
       const summary = loggedSets(last.ex).map(s => `${fmtWeight(s.weight)}×${s.reps}`).join(', ');
       card.append(el('div', { class: 'last-time' }, `↩︎ Dernière fois (${fmtDate(last.date, { day: 'numeric', month: 'short' })}) : ${summary}`));
     } else {
       card.append(el('div', { class: 'last-time muted' }, 'Première fois sur cet exercice — note tes charges, elles serviront de repère.'));
     }
-    ex.notes ? card.append(el('div', { class: 'muted small', style: 'margin:2px 0 6px' }, ex.notes)) : null;
 
     const setsWrap = el('div', { class: 'sets-wrap' });
     const rebuild = () => { setsWrap.replaceChildren(); ex.sets.forEach((set, i) => setsWrap.append(setRow(ex, set, i, last, timer, rebuild))); };
@@ -104,6 +119,7 @@ function build(root, ctx, logs) {
       setsWrap,
       el('button', { class: 'btn btn-ghost small add-set', onclick: () => { ex.sets.push({ weight: ex.sets.at(-1)?.weight ?? null, reps: null, done: false }); rebuild(); } }, '+ série'),
     );
+    if (ex.notes) card.append(el('details', { class: 'ex-notes-toggle' }, el('summary', {}, 'Consignes'), el('div', { class: 'ex-notes' }, ex.notes)));
     root.append(card);
   });
 

@@ -173,7 +173,10 @@ function sessionRow(session, week, program, ctx) {
     session.type === 'muscu' && (session.exercises || []).length
       ? el('div', {},
           el('ul', { class: 'segments' }, ...session.exercises.map(x =>
-            el('li', { class: 'seg seg-muscu' }, `${x.name} — ${x.sets || '?'} × ${x.reps ?? '?'}${x.rest ? ` · récup ${x.rest}s` : ''}`))),
+            el('li', { class: 'seg seg-muscu' },
+              x.info || (x.sets == null && !x.reps)
+                ? `${x.name} — circuit`
+                : `${x.name} — ${x.sets || '?'} × ${x.reps ?? '?'}${x.rpe ? ` @ RPE ${x.rpe}` : ''}${x.rest ? ` · récup ${x.rest}s` : ''}`))),
           el('button', { class: 'btn btn-primary small', style: 'margin-top:8px', onclick: () => ctx.navigate('workout', { programId: program.id, sessionId: session.id }) },
             session.completed ? '📋 Voir / modifier la séance' : '🏋️ Démarrer la séance'))
       : segs.length

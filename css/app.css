@@ -504,6 +504,10 @@ h2 { font-size: 1.15rem; }
 }
 .set-check.checked { background: var(--muscu); border-color: var(--muscu); }
 .add-set { width: 100%; margin-top: 2px; color: var(--muscu); }
+.video-link { display: inline-block; background: #ffeef0; color: var(--pink); border: 1px solid #ffd4da; border-radius: 999px; padding: 5px 12px; font-size: .74rem; font-weight: 700; cursor: pointer; margin: 4px 0; }
+.ex-notes { font-size: .76rem; color: var(--muted); white-space: pre-line; line-height: 1.5; margin-top: 4px; }
+.ex-notes-toggle { margin-top: 8px; }
+.ex-notes-toggle summary { font-size: .74rem; font-weight: 600; color: var(--muscu); cursor: pointer; }
 
 /* Minuteur de récupération (flottant) */
 .rest-timer {

@@ -3,9 +3,10 @@
 // évaluation des badges, callback OAuth Strava.
 // ============================================================
 
-import { $, el, toast, confetti } from './utils.js';
-import { getActivities, getMetrics, getState, setState } from './db.js';
+import { $, el, toast, confetti, isoDay, mondayOf } from './utils.js';
+import { getActivities, getMetrics, getState, setState, getStrengthLogs, saveStrengthLog } from './db.js';
 import { SUB50_PROGRAM } from './program-data.js';
+import { MUSCU_PROGRAMS, MUSCU_SEED_LOGS } from './muscu-seed.js';
 import { evaluateBadges } from './gamification.js';
 import { destroyCharts } from './charts.js';
 import { dedupeStored } from './data-import.js';
@@ -48,6 +49,27 @@ function seedPrograms() {
     setState('programs', programs);
   }
   return programs;
+}
+
+// Insertion « de base » (une seule fois) des programmes muscu importés + de leur
+// historique. Un flag évite qu'ils reviennent après suppression.
+async function seedMuscuOnce() {
+  if (getState('muscuSeeded')) return;
+  const programs = getState('programs', []);
+  const monday = isoDay(mondayOf(new Date()));
+  for (const mp of MUSCU_PROGRAMS) {
+    if (!programs.some(p => p.id === mp.id)) {
+      const clone = structuredClone(mp);
+      clone.startDate = monday; // template hebdo → cale sur la semaine en cours
+      programs.push(clone);
+    }
+  }
+  setState('programs', programs);
+  try {
+    const existing = new Set((await getStrengthLogs()).map(l => l.id));
+    for (const log of MUSCU_SEED_LOGS) if (!existing.has(log.id)) await saveStrengthLog(log);
+  } catch (e) { console.warn('seed logs muscu :', e); }
+  setState('muscuSeeded', true);
 }
 
 async function loadData() {
@@ -120,6 +142,7 @@ function buildNav() {
 
 async function init() {
   seedPrograms();
+  await seedMuscuOnce();
   buildNav();
 
   // Callback OAuth Strava (?code=...)
