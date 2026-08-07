@@ -3,9 +3,10 @@
 // des séances en les liant à une activité importée.
 // ============================================================
 
-import { el, fmtKm, fmtPace, fmtDuration, fmtDate, paceOf, toast, confetti, isoDay, downloadJson, readFileAsText } from '../utils.js';
+import { el, fmtKm, fmtPace, fmtDuration, fmtDate, paceOf, toast, confetti, isoDay, downloadJson, readFileAsText, mondayOf, addDays, weekKey } from '../utils.js';
 import { SESSION_TYPES, validateProgram } from '../program-data.js';
 import { sessionDate, weekComplete, programStats, allSessions } from '../gamification.js';
+import { logForSessionWeek, logTonnage } from '../strength.js';
 import { setState, getState } from '../db.js';
 import {
   completionDelay, shiftIsUseful, proposeWeekShift, applyShift,
@@ -41,6 +42,8 @@ export function renderProgram(root, ctx) {
     root.append(el('div', { class: 'card muted' }, 'Aucun programme. Importe un programme JSON ou restaure une sauvegarde.'));
     return;
   }
+
+  if (program.recurring) { renderRecurringProgram(root, program, ctx); return; }
 
   const stats = programStats(program);
 
@@ -350,6 +353,68 @@ function deleteProgram(program, ctx) {
   persist(ctx);
   toast('Programme supprimé', 'success');
   ctx.navigate('program', {});
+}
+
+// ---------- Programme récurrent (template hebdomadaire, ex. muscu) ----------
+
+function renderRecurringProgram(root, program, ctx) {
+  const logs = ctx.strengthLogs || [];
+  const cursor = ctx.params?.weekDate ? new Date(ctx.params.weekDate + 'T12:00:00') : new Date();
+  const monday = mondayOf(cursor);
+  const mondayIso = isoDay(monday);
+  const isCurrentWeek = mondayIso === isoDay(mondayOf(new Date()));
+  const sessions = [...(program.weeks[0]?.sessions || [])].sort((a, b) => a.day - b.day);
+  const doneCount = sessions.filter(s => logForSessionWeek(logs, s.id, mondayIso)).length;
+
+  root.append(el('div', { class: 'card prog-head' },
+    el('div', { class: 'prog-head-top' },
+      el('div', {},
+        el('h2', {}, program.name),
+        el('div', { class: 'muted small' }, el('span', { class: 'recur-chip' }, '🔁 Revient chaque semaine'), program.objective ? ` · ${program.objective}` : ''),
+      ),
+      el('div', { class: 'head-actions' },
+        el('button', { class: 'btn btn-ghost small', title: 'Supprimer ce programme', onclick: () => deleteProgram(program, ctx) }, '🗑️'),
+      ),
+    ),
+    program.description ? el('details', { class: 'prog-desc' }, el('summary', {}, 'À propos'), el('p', {}, program.description)) : null,
+  ));
+
+  root.append(el('div', { class: 'agenda-nav' },
+    el('button', { class: 'btn btn-ghost small', onclick: () => ctx.navigate('program', { programId: program.id, weekDate: isoDay(addDays(monday, -7)) }) }, '‹'),
+    el('button', { class: 'btn btn-ghost small', onclick: () => ctx.navigate('program', { programId: program.id }) },
+      isCurrentWeek ? 'Cette semaine' : `${fmtDate(monday, { day: 'numeric', month: 'short' })} – ${fmtDate(addDays(monday, 6), { day: 'numeric', month: 'short' })}`),
+    el('button', { class: 'btn btn-ghost small', onclick: () => ctx.navigate('program', { programId: program.id, weekDate: isoDay(addDays(monday, 7)) }) }, '›'),
+  ));
+
+  root.append(el('div', { class: 'prog-progress' },
+    el('div', { class: 'prog-bar' }, el('div', { style: `width:${sessions.length ? Math.round(doneCount / sessions.length * 100) : 0}%` })),
+    el('span', {}, `${doneCount}/${sessions.length} séances faites cette semaine`),
+  ));
+
+  for (const s of sessions) {
+    const occ = isoDay(addDays(monday, s.day));
+    const log = logForSessionWeek(logs, s.id, mondayIso);
+    const done = !!log;
+    const type = SESSION_TYPES[s.type] || SESSION_TYPES.muscu;
+    const open = () => ctx.navigate('workout', { programId: program.id, sessionId: s.id, date: occ });
+    const body = el('div', { class: 'session-body' },
+      el('ul', { class: 'segments' }, ...(s.exercises || []).map(x => el('li', { class: 'seg seg-muscu' },
+        x.info || (x.sets == null && !x.reps) ? `${x.name} — circuit` : `${x.name} — ${x.sets || '?'} × ${x.reps ?? '?'}${x.rpe ? ` @ RPE ${x.rpe}` : ''}`))),
+      log ? el('div', { class: 'session-actual' }, `✅ ${logTonnage(log)} kg soulevés`) : null,
+      el('button', { class: 'btn btn-primary small', style: 'margin-top:8px', onclick: open }, done ? '📋 Voir / modifier' : '🏋️ Démarrer la séance'),
+    );
+    const card = el('div', { class: `card week-card ${done ? 'week-done' : ''}` },
+      el('div', { class: 'session-head', onclick: () => body.classList.toggle('open') },
+        el('span', { class: 'session-day' }, DAY_NAMES[s.day] || '?'),
+        el('span', { class: 'type-pill', style: `background:${type.color}` }, type.label),
+        el('div', { class: 'session-title' }, s.title),
+        el('span', { class: 'muted small' }, `${(s.exercises || []).length} ex`),
+        el('button', { class: `btn-check ${done ? 'checked' : ''}`, onclick: e => { e.stopPropagation(); open(); } }, done ? '✓' : '›'),
+      ),
+      body,
+    );
+    root.append(card);
+  }
 }
 
 // ---------- Replanification intelligente ----------

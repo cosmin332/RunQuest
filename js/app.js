@@ -73,15 +73,17 @@ async function seedMuscuOnce() {
 }
 
 async function loadData() {
-  const [activities, metrics] = await Promise.all([getActivities(), getMetrics()]);
+  const [activities, metrics, strengthLogs] = await Promise.all([getActivities(), getMetrics(), getStrengthLogs()]);
   state.activities = activities;
   state.metrics = metrics;
+  state.strengthLogs = strengthLogs;
 }
 
 function ctx() {
   return {
     activities: state.activities,
     metrics: state.metrics,
+    strengthLogs: state.strengthLogs || [],
     programs: getState('programs', []),
     settings: getState('settings', {}),
     params: state.params,
@@ -140,9 +142,20 @@ function buildNav() {
   }
 }
 
+// Migration : garantit le flag `recurring` sur les programmes muscu connus,
+// même s'ils ont été semés avant l'introduction de la récurrence.
+function migrateMuscuRecurring() {
+  const programs = getState('programs', []);
+  const ids = new Set(MUSCU_PROGRAMS.map(m => m.id));
+  let changed = false;
+  for (const p of programs) if (ids.has(p.id) && !p.recurring) { p.recurring = true; changed = true; }
+  if (changed) setState('programs', programs);
+}
+
 async function init() {
   seedPrograms();
   await seedMuscuOnce();
+  migrateMuscuRecurring();
   buildNav();
 
   // Callback OAuth Strava (?code=...)

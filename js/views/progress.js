@@ -166,6 +166,12 @@ export function renderProgress(root, ctx) {
 
   // --- Avancement des programmes ---
   for (const p of ctx.programs) {
+    if (p.recurring) {
+      root.append(el('div', { class: 'card' },
+        el('div', { class: 'card-title' }, `🔁 ${p.name}`),
+        el('div', { class: 'muted small' }, 'Programme hebdomadaire récurrent — suivi détaillé dans Stats → 💪 Muscu.')));
+      continue;
+    }
     const stats = programStats(p);
     const blocks = [...blockGroups(p)];
     root.append(el('div', { class: 'card' },

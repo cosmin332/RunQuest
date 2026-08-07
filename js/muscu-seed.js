@@ -1,6 +1,6 @@
 // ============================================================
 // RunQuest — programmes muscu importés depuis muscu_backup_2026-06-06.json
-// Généré automatiquement (exercices, RPE, notes, vidéos conservés).
+// Généré automatiquement (exercices, RPE, notes, vidéos conservés). Récurrents (hebdo).
 // ============================================================
 
 export const MUSCU_PROGRAMS = [
@@ -10,7 +10,8 @@ export const MUSCU_PROGRAMS = [
     "objective": "Hypertrophie / force",
     "startDate": "2026-01-05",
     "source": "backup 2026-06-06",
-    "description": "Programme muscu importé (split haut/bas). RPE, notes et vidéos conservés. Adapte les jours et la date de début si besoin.",
+    "recurring": true,
+    "description": "Programme muscu importé (split haut/bas), répété chaque semaine. RPE, notes et vidéos conservés.",
     "paces": {},
     "weeks": [
       {
@@ -276,7 +277,8 @@ export const MUSCU_PROGRAMS = [
     "objective": "Hyrox / conditioning",
     "startDate": "2026-01-05",
     "source": "backup 2026-06-06",
-    "description": "Programme Hyrox importé (muscu + circuits/AMRAP). Les circuits sans charge sont en notes.",
+    "recurring": true,
+    "description": "Programme Hyrox importé (muscu + circuits/AMRAP), répété chaque semaine.",
     "paces": {},
     "weeks": [
       {

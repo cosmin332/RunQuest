@@ -5,17 +5,29 @@
 
 import { el, fmtDate, isoDay, mondayOf, addDays } from '../utils.js';
 import { sessionDateTime, sessionTime, sessionDate } from '../gamification.js';
+import { loggedInWeek } from '../strength.js';
 import { SESSION_TYPES } from '../program-data.js';
 
 const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-function collect(programs) {
+function collect(programs, cursor, logs) {
   const out = [];
+  const from = mondayOf(addDays(cursor, -42)), to = mondayOf(addDays(cursor, 42));
   for (const p of programs) {
     if (p.archived) continue;
-    for (const w of p.weeks) {
-      for (const s of w.sessions) {
-        out.push({ program: p, week: w, session: s, dt: sessionDateTime(p, w, s), time: sessionTime(s) });
+    if (p.recurring) {
+      // template hebdo : on projette chaque séance sur toutes les semaines visibles
+      for (const w of p.weeks) for (const s of w.sessions) {
+        const time = sessionTime(s);
+        for (let m = new Date(from); m <= to; m = addDays(m, 7)) {
+          const dt = addDays(m, s.day);
+          if (time) { const [h, mm] = time.split(':').map(Number); dt.setHours(h, mm || 0, 0, 0); }
+          out.push({ program: p, week: w, session: s, dt, time, recurring: true, occ: isoDay(dt), done: loggedInWeek(logs, s.id, isoDay(m)) });
+        }
+      }
+    } else {
+      for (const w of p.weeks) for (const s of w.sessions) {
+        out.push({ program: p, week: w, session: s, dt: sessionDateTime(p, w, s), time: sessionTime(s), done: !!s.completed });
       }
     }
   }
@@ -23,14 +35,15 @@ function collect(programs) {
 }
 
 function openSession(item, ctx) {
-  if (item.session.type === 'muscu') ctx.navigate('workout', { programId: item.program.id, sessionId: item.session.id });
+  if (item.session.type === 'muscu') ctx.navigate('workout', { programId: item.program.id, sessionId: item.session.id, ...(item.recurring ? { date: item.occ } : {}) });
+  else if (item.program.recurring) ctx.navigate('program', { programId: item.program.id });
   else ctx.navigate('program', { programId: item.program.id, week: item.week.num });
 }
 
 export function renderAgenda(root, ctx) {
   const mode = ctx.params?.mode || 'semaine';
   const cursor = ctx.params?.date ? new Date(ctx.params.date + 'T12:00:00') : new Date();
-  const all = collect(ctx.programs);
+  const all = collect(ctx.programs, cursor, ctx.strengthLogs || []);
 
   root.append(el('div', { class: 'subtabs' },
     ...[['jour', '📆 Jour'], ['semaine', '🗓️ Semaine'], ['mois', '📅 Mois']].map(([m, label]) =>
@@ -61,7 +74,7 @@ function navBar(ctx, mode, cursor, label, stepDays) {
 
 function sessionLine(item, ctx, compact = false) {
   const t = SESSION_TYPES[item.session.type] || SESSION_TYPES.ef;
-  const done = item.session.completed;
+  const done = item.done;
   const dist = item.session.estKm ? `${item.session.estKm} km` : '';
   const dur = item.session.estMin ? `${item.session.estMin} min` : '';
   const meta = [dist, dur].filter(Boolean).join(' · ');

@@ -3,9 +3,9 @@
 // rappel de la dernière fois, minuteur de récup auto (2 min par défaut).
 // ============================================================
 
-import { el, toast, confetti, uid, isoDay, fmtDate, fmtDuration } from '../utils.js';
+import { el, toast, confetti, uid, isoDay, fmtDate, fmtDuration, weekKey, mondayOf } from '../utils.js';
 import { setState } from '../db.js';
-import { getStrengthLogs, saveStrengthLog, lastForExercise, loggedSets, logTonnage } from '../strength.js';
+import { getStrengthLogs, saveStrengthLog, deleteStrengthLog, lastForExercise, loggedSets, logTonnage, logForSessionWeek } from '../strength.js';
 import { SESSION_TYPES } from '../program-data.js';
 import { evaluateBadges } from '../gamification.js';
 
@@ -15,6 +15,31 @@ function parseNum(v) {
   if (v == null || v === '') return null;
   const n = parseFloat(String(v).replace(',', '.'));
   return isFinite(n) ? n : null;
+}
+
+// Extrait un ID YouTube (11 car.) d'une URL ou d'un ID collé.
+export function parseYouTube(input) {
+  if (!input) return null;
+  const s = String(input).trim();
+  const m = s.match(/(?:youtu\.be\/|v=|embed\/|shorts\/)([A-Za-z0-9_-]{11})/) || s.match(/^([A-Za-z0-9_-]{11})$/);
+  return m ? m[1] : null;
+}
+
+// Lecteur vidéo intégré (modale + iframe YouTube).
+function openVideo(id, title = '') {
+  const overlay = el('div', { class: 'modal-overlay video-overlay', onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  overlay.append(el('div', { class: 'video-modal' },
+    el('div', { class: 'video-modal-head' },
+      el('span', { class: 'video-modal-title' }, title || 'Démonstration'),
+      el('button', { class: 'btn-close', onclick: () => overlay.remove() }, '×')),
+    el('div', { class: 'video-frame' },
+      el('iframe', {
+        src: `https://www.youtube-nocookie.com/embed/${id}?rel=0&playsinline=1`,
+        allow: 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture',
+        allowfullscreen: 'true', frameborder: '0',
+      })),
+  ));
+  document.body.append(overlay);
 }
 
 export function renderWorkout(root, ctx) {
@@ -38,9 +63,20 @@ function build(root, ctx, logs) {
 
   const type = SESSION_TYPES[session.type] || SESSION_TYPES.muscu;
   const startedAt = Date.now();
+  const recurring = !!program.recurring;
 
-  // modèle de travail : reprend un log existant si la séance est déjà validée
-  const existing = session.workoutId ? logs.find(l => l.id === session.workoutId) : null;
+  // date de la séance : occurrence passée en paramètre (agenda / semaine en cours),
+  // sinon aujourd'hui pour un programme récurrent, sinon la date planifiée.
+  const targetDate = ctx.params.date
+    ? new Date(ctx.params.date + 'T12:00:00')
+    : new Date();
+  const targetMonday = weekKey(targetDate);
+
+  // log existant : pour un récurrent, celui de la semaine visée ; sinon via workoutId.
+  const existing = recurring
+    ? logForSessionWeek(logs, session.id, targetMonday)
+    : (session.workoutId ? logs.find(l => l.id === session.workoutId) : null);
+  const alreadyDone = recurring ? !!existing : !!session.completed;
   const model = (session.exercises || []).map((ex, i) => {
     const saved = existing?.exercises?.[i];
     const info = ex.info || (ex.sets == null && (ex.reps == null || ex.reps === ''));
@@ -70,9 +106,10 @@ function build(root, ctx, logs) {
     el('div', { class: 'card wk-head' },
       el('div', {},
         el('span', { class: 'type-pill', style: `background:${type.color}` }, type.label),
+        recurring ? el('span', { class: 'recur-chip' }, ' 🔁 chaque semaine') : null,
         el('h2', { style: 'margin-top:6px' }, session.title),
-        el('div', { class: 'muted small' }, `${fmtDate(session.completedAt || new Date())} · ${model.length} exercice${model.length > 1 ? 's' : ''}`
-          + (session.completed ? ' · ✅ validée' : '')),
+        el('div', { class: 'muted small' }, `${fmtDate(targetDate, { weekday: 'long', day: 'numeric', month: 'long' })} · ${model.length} exercice${model.length > 1 ? 's' : ''}`
+          + (alreadyDone ? ' · ✅ faite' : '')),
       ),
       session.notes || session.note ? el('div', { class: 'session-notes' }, `💡 ${session.notes || session.note}`) : null,
     ),
@@ -92,9 +129,36 @@ function build(root, ctx, logs) {
         el('div', { class: 'ex-target' }, targetTxt),
       ),
     );
-    if (ex.youtubeId) {
-      card.append(el('button', { class: 'video-link', onclick: () => window.open(`https://www.youtube.com/watch?v=${ex.youtubeId}`, '_blank', 'noopener') }, '▶ Voir la démo vidéo'));
-    }
+    // Vidéo : lecteur intégré + lien modifiable (ou ajout si absent)
+    const realEx = session.exercises[exIdx];
+    const vids = el('div', { class: 'video-row' });
+    const editVideo = () => {
+      const cur = ex.youtubeId ? `https://youtu.be/${ex.youtubeId}` : '';
+      const v = prompt('Colle le lien YouTube (ou l’ID) de la démo :', cur);
+      if (v === null) return;
+      if (v.trim() === '') { ex.youtubeId = null; if (realEx) realEx.youtubeId = null; }
+      else {
+        const id = parseYouTube(v);
+        if (!id) { toast('Lien YouTube non reconnu', 'error'); return; }
+        ex.youtubeId = id; if (realEx) realEx.youtubeId = id;
+      }
+      setState('programs', ctx.programs);
+      renderVids();
+      toast('Vidéo mise à jour', 'success');
+    };
+    const renderVids = () => {
+      vids.replaceChildren();
+      if (ex.youtubeId) {
+        vids.append(
+          el('button', { class: 'video-link', onclick: () => openVideo(ex.youtubeId, ex.name) }, '▶ Voir la démo'),
+          el('button', { class: 'video-edit', title: 'Changer la vidéo', onclick: editVideo }, '✎'),
+        );
+      } else {
+        vids.append(el('button', { class: 'video-add', onclick: editVideo }, '＋ Ajouter une vidéo'));
+      }
+    };
+    renderVids();
+    card.append(vids);
 
     if (ex.info) {
       // exercice « circuit / AMRAP » : pas de charges à logger, on garde la consigne
@@ -125,25 +189,34 @@ function build(root, ctx, logs) {
 
   // --- Terminer ---
   const finishBtn = el('button', { class: 'btn btn-primary full', style: 'margin-top:4px', onclick: () => finish() },
-    session.completed ? 'Mettre à jour la séance' : 'Terminer la séance 💪');
+    alreadyDone ? 'Mettre à jour la séance' : 'Terminer la séance 💪');
   root.append(finishBtn);
-  if (session.completed) {
+  if (alreadyDone) {
     root.append(el('button', { class: 'btn btn-ghost full', style: 'margin-top:8px', onclick: () => {
-      if (!confirm('Annuler la validation de cette séance ?')) return;
-      session.completed = false; session.completedAt = null; session.workoutId = null;
-      setState('programs', ctx.programs);
-      toast('Validation annulée');
-      ctx.navigate('program', { programId: program.id });
-    } }, 'Annuler la validation'));
+      if (!confirm('Supprimer cette séance enregistrée ?')) return;
+      const done = () => { setState('programs', ctx.programs); toast('Séance supprimée'); ctx.refresh(); ctx.navigate('program', { programId: program.id }); };
+      if (recurring) {
+        if (existing) deleteStrengthLog(existing.id).then(done); else done();
+      } else {
+        session.completed = false; session.completedAt = null;
+        const wid = session.workoutId; session.workoutId = null;
+        (wid ? deleteStrengthLog(wid) : Promise.resolve()).then(done);
+      }
+    } }, recurring ? 'Supprimer cette séance' : 'Annuler la validation'));
   }
 
   function finish() {
     const anyLogged = model.some(ex => loggedSets(ex).length);
     if (!anyLogged && !confirm('Aucune série renseignée. Valider quand même la séance ?')) return;
     timer.stop();
+    // date du log : jour de l'occurrence (récurrent) sinon aujourd'hui / date conservée
+    const logDate = recurring
+      ? new Date(targetDate.getTime())
+      : (session.completedAt ? new Date(session.completedAt + 'T12:00:00') : new Date());
+    if (recurring) logDate.setHours(18, 30, 0, 0);
     const log = {
-      id: session.workoutId || uid(),
-      date: session.completedAt ? new Date(session.completedAt + 'T12:00:00').toISOString() : new Date().toISOString(),
+      id: (recurring ? existing?.id : session.workoutId) || uid(),
+      date: logDate.toISOString(),
       programId: program.id,
       sessionId: session.id,
       title: session.title,
@@ -154,16 +227,17 @@ function build(root, ctx, logs) {
       })),
     };
     saveStrengthLog(log).then(() => {
-      session.completed = true;
-      session.completedAt = isoDay(new Date(log.date));
-      session.workoutId = log.id;
-      setState('programs', ctx.programs);
-      getStrengthLogs().then(all => {
-        const fresh = evaluateBadges(ctx.programs, ctx.activities);
-        confetti();
-        toast(`Séance muscu validée ! ${logTonnage(log)} kg soulevés · +${type.xp} XP 💪`, 'success', 4000);
-        ctx.navigate('program', { programId: program.id });
-      });
+      if (!recurring) {
+        session.completed = true;
+        session.completedAt = isoDay(new Date(log.date));
+        session.workoutId = log.id;
+        setState('programs', ctx.programs);
+      }
+      evaluateBadges(ctx.programs, ctx.activities);
+      confetti();
+      toast(`Séance muscu enregistrée ! ${logTonnage(log)} kg soulevés 💪`, 'success', 4000);
+      ctx.refresh();
+      ctx.navigate('program', { programId: program.id });
     });
   }
 }

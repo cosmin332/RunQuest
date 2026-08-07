@@ -504,7 +504,18 @@ h2 { font-size: 1.15rem; }
 }
 .set-check.checked { background: var(--muscu); border-color: var(--muscu); }
 .add-set { width: 100%; margin-top: 2px; color: var(--muscu); }
-.video-link { display: inline-block; background: #ffeef0; color: var(--pink); border: 1px solid #ffd4da; border-radius: 999px; padding: 5px 12px; font-size: .74rem; font-weight: 700; cursor: pointer; margin: 4px 0; }
+.video-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.video-link { display: inline-block; background: #ffeef0; color: var(--pink); border: 1px solid #ffd4da; border-radius: 999px; padding: 5px 12px; font-size: .74rem; font-weight: 700; cursor: pointer; }
+.video-edit { background: #fff; border: 1px solid var(--border); border-radius: 999px; padding: 5px 9px; font-size: .74rem; cursor: pointer; color: var(--muted); }
+.video-add { background: #fff; border: 1px dashed var(--border); border-radius: 999px; padding: 5px 12px; font-size: .72rem; font-weight: 600; cursor: pointer; color: var(--muscu); }
+.recur-chip { font-size: .68rem; font-weight: 700; color: var(--muscu); background: #eef0ff; padding: 2px 8px; border-radius: 999px; }
+.video-overlay { align-items: center; }
+.video-modal { background: #000; border-radius: 16px; width: min(760px, 96vw); overflow: hidden; }
+.video-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #111; }
+.video-modal-title { color: #fff; font-size: .85rem; font-weight: 600; }
+.video-modal-head .btn-close { color: #fff; }
+.video-frame { position: relative; width: 100%; aspect-ratio: 16/9; }
+.video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .ex-notes { font-size: .76rem; color: var(--muted); white-space: pre-line; line-height: 1.5; margin-top: 4px; }
 .ex-notes-toggle { margin-top: 8px; }
 .ex-notes-toggle summary { font-size: .74rem; font-weight: 600; color: var(--muscu); cursor: pointer; }

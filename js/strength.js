@@ -4,9 +4,17 @@
 // ============================================================
 
 import { getStrengthLogs, saveStrengthLog, deleteStrengthLog } from './db.js';
-import { isoDay, addDays } from './utils.js';
+import { isoDay, addDays, weekKey } from './utils.js';
 
 export { getStrengthLogs, saveStrengthLog, deleteStrengthLog };
+
+// Un log existe-t-il pour cette séance dans la semaine du lundi `mondayIso` ?
+export function logForSessionWeek(logs, sessionId, mondayIso) {
+  return logs.find(l => l.sessionId === sessionId && weekKey(l.date) === mondayIso) || null;
+}
+export function loggedInWeek(logs, sessionId, mondayIso) {
+  return !!logForSessionWeek(logs, sessionId, mondayIso);
+}
 
 // clé de rapprochement d'un exercice entre séances (nom normalisé)
 export function exKey(name) {
