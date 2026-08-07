@@ -151,9 +151,13 @@ function sessionRow(session, week, program, ctx) {
       el('span', { class: 'session-xp' }, `+${type.xp} XP`),
       el('button', {
         class: `btn-check ${session.completed ? 'checked' : ''}`,
-        title: session.completed ? 'Séance validée — cliquer pour gérer' : 'Valider la séance',
-        onclick: e => { e.stopPropagation(); openValidation(session, week, program, ctx); },
-      }, session.completed ? '✓' : ''),
+        title: session.type === 'muscu' ? 'Ouvrir la séance muscu' : session.completed ? 'Séance validée — cliquer pour gérer' : 'Valider la séance',
+        onclick: e => {
+          e.stopPropagation();
+          if (session.type === 'muscu') ctx.navigate('workout', { programId: program.id, sessionId: session.id });
+          else openValidation(session, week, program, ctx);
+        },
+      }, session.completed ? '✓' : session.type === 'muscu' ? '›' : ''),
     ),
     el('div', { class: 'session-sub' },
       `${fmtDate(date)}`,
@@ -166,9 +170,15 @@ function sessionRow(session, week, program, ctx) {
   const segs = (session.segments || []).filter(seg => segmentLabel(seg));
   const note = session.notes || session.note;
   const body = el('div', { class: 'session-body' },
-    segs.length
-      ? el('ul', { class: 'segments' }, ...segs.map(seg => el('li', { class: `seg seg-${seg.k}` }, segmentLabel(seg))))
-      : (session.type === 'repos' ? el('div', { class: 'seg seg-rest' }, 'Repos complet — la récupération fait partie de l’entraînement') : null),
+    session.type === 'muscu' && (session.exercises || []).length
+      ? el('div', {},
+          el('ul', { class: 'segments' }, ...session.exercises.map(x =>
+            el('li', { class: 'seg seg-muscu' }, `${x.name} — ${x.sets || '?'} × ${x.reps ?? '?'}${x.rest ? ` · récup ${x.rest}s` : ''}`))),
+          el('button', { class: 'btn btn-primary small', style: 'margin-top:8px', onclick: () => ctx.navigate('workout', { programId: program.id, sessionId: session.id }) },
+            session.completed ? '📋 Voir / modifier la séance' : '🏋️ Démarrer la séance'))
+      : segs.length
+        ? el('ul', { class: 'segments' }, ...segs.map(seg => el('li', { class: `seg seg-${seg.k}` }, segmentLabel(seg))))
+        : (session.type === 'repos' ? el('div', { class: 'seg seg-rest' }, 'Repos complet — la récupération fait partie de l’entraînement') : null),
     note ? el('div', { class: 'session-notes' }, `💡 ${note}`) : null,
     session.completed && session.actual
       ? el('div', { class: 'session-actual' },
@@ -539,11 +549,17 @@ function showFormatHelp() {
       weeks: [{
         num: 1, block: 'Bloc 1', label: 'reprise', targetKm: 30,
         sessions: [
-          { id: 'w1-mar', day: 1, type: 'seuil', title: 'Seuil 3×1000 m', estKm: 7, estMin: 45,
+          { id: 'w1-mar', day: 1, type: 'seuil', title: 'Seuil 3×1000 m', estKm: 7, estMin: 45, time: '05:00',
             segments: [
               { k: 'wu', min: 15, pace: 'EF' },
               { k: 'int', reps: 3, dist: 1000, pace: '5:10', rec: '2 min trot' },
               { k: 'cd', min: 5 }] },
+          { id: 'w1-mer', day: 2, type: 'muscu', title: 'Renfo bas du corps', estMin: 40, time: '18:30',
+            exercises: [
+              { name: 'Squat', sets: 4, reps: '8-10', rest: 120 },
+              { name: 'Fentes haltères', sets: 3, reps: '10', rest: 90 },
+              { name: 'Mollets debout', sets: 4, reps: '15', rest: 60 },
+            ] },
           { id: 'w1-dim', day: 6, type: 'sl', title: 'Sortie longue 1h10', estKm: 11, estMin: 70,
             segments: [{ k: 'steady', min: 70, pace: '6:20' }] },
         ],
@@ -555,9 +571,12 @@ function showFormatHelp() {
       el('button', { class: 'btn-close', onclick: () => overlay.remove() }, '×')),
     el('p', { class: 'small' },
       'Fichier JSON avec « programs » : liste de programmes. Chaque séance : day (0=Lun … 6=Dim), '
-      + 'type (vma, seuil, spe, ef, sl, test, course, renfo, repos), segments '
-      + '(wu/cd : échauffement/retour au calme · int : fractionné · steady : continu · strides : lignes droites · drill : exercice libre · rest : repos). '
-      + 'Tu peux importer plusieurs programmes d’un coup — c’est le format à donner à ton coach (ou à Claude 😉) pour générer tes futurs plans.'),
+      + 'type (vma, seuil, spe, ef, sl, test, course, renfo, muscu, repos), et time (HH:MM, optionnel — '
+      + 'défaut : run 05:00, muscu 18:30). '
+      + 'Séances de course → segments (wu/cd : échauffement/RC · int : fractionné · steady : continu · strides : lignes droites · race : chrono). '
+      + 'Séances muscu → exercises : liste de { name, sets, reps, rest (sec, défaut 120), notes }. '
+      + 'RunQuest garde en mémoire les poids d’une séance à l’autre et lance un minuteur de récup auto après chaque série. '
+      + 'C’est le format à donner à une IA pour générer/adapter tes plans (course ET muscu).'),
     el('pre', { class: 'code-block' }, JSON.stringify(example, null, 2)),
     el('div', { class: 'modal-actions' },
       el('button', { class: 'btn', onclick: () => downloadJson(example, 'exemple-programme-runquest.json') }, '⬇️ Télécharger l’exemple'),

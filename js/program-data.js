@@ -48,6 +48,7 @@ export const SESSION_TYPES = {
   test:   { label: 'Test chrono',      color: '#7209b7', xp: 120 },
   course: { label: 'Course objectif',  color: '#d90429', xp: 200 },
   renfo:  { label: 'Renforcement',     color: '#3bceac', xp: 15 },
+  muscu:  { label: 'Musculation',      color: '#5e60ce', xp: 40 },
   repos:  { label: 'Repos',            color: '#8d99ae', xp: 10 },
 };
 
@@ -296,6 +297,8 @@ export function validateProgram(p) {
       ids.add(s.id);
       if (s.day == null || s.day < 0 || s.day > 6) errors.push(`day invalide pour ${s.id} (0=Lun … 6=Dim)`);
       if (!SESSION_TYPES[s.type]) errors.push(`type inconnu « ${s.type} » pour ${s.id}`);
+      if (s.type === 'muscu' && s.exercises && !Array.isArray(s.exercises)) errors.push(`exercises doit être une liste pour ${s.id}`);
+      if (s.time && !/^\d{1,2}:\d{2}$/.test(s.time)) errors.push(`time invalide pour ${s.id} (attendu HH:MM)`);
     }
   }
   return errors;

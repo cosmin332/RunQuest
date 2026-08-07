@@ -46,6 +46,23 @@ export function sessionDate(program, week, session) {
   return d;
 }
 
+// Heure d'une séance : `time` explicite sinon défaut par type.
+// Runs tôt le matin (05:00), muscu/renfo le soir (18:30/18:00).
+export function sessionTime(session) {
+  if (session.time && /^\d{1,2}:\d{2}$/.test(session.time)) return session.time;
+  if (session.type === 'muscu') return '18:30';
+  if (session.type === 'renfo') return '18:00';
+  if (session.type === 'repos') return null;
+  return '05:00';
+}
+
+export function sessionDateTime(program, week, session) {
+  const d = sessionDate(program, week, session);
+  const time = sessionTime(session);
+  if (time) { const [h, m] = time.split(':').map(Number); d.setHours(h, m || 0, 0, 0); }
+  return d;
+}
+
 export function weekComplete(week) {
   const required = week.sessions.filter(s => !s.optional);
   return required.length > 0 && required.every(s => s.completed);

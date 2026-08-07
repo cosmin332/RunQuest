@@ -17,14 +17,18 @@ import { renderActivities } from './views/activities.js';
 import { renderStats } from './views/stats.js';
 import { renderProgress } from './views/progress.js';
 import { renderSettings } from './views/settings.js';
+import { renderAgenda } from './views/agenda.js';
+import { renderWorkout } from './views/workout.js';
 
 const VIEWS = {
   dashboard: { render: renderDashboard, icon: '🏠', label: 'Accueil' },
+  agenda: { render: renderAgenda, icon: '📅', label: 'Agenda' },
   program: { render: renderProgram, icon: '🗓️', label: 'Programme' },
   activities: { render: renderActivities, icon: '👟', label: 'Activités' },
   stats: { render: renderStats, icon: '📈', label: 'Stats' },
   progress: { render: renderProgress, icon: '🏆', label: 'Progrès' },
   settings: { render: renderSettings, icon: '⚙️', label: 'Réglages' },
+  workout: { render: renderWorkout, icon: '🏋️', label: 'Séance', hidden: true },
 };
 
 const state = {
@@ -106,6 +110,7 @@ function render() {
 function buildNav() {
   const nav = $('#nav');
   for (const [id, v] of Object.entries(VIEWS)) {
+    if (v.hidden) continue;
     nav.append(el('button', {
       class: 'nav-btn', 'data-view': id,
       onclick: () => navigate(id),

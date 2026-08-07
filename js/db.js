@@ -3,12 +3,13 @@
 // ============================================================
 
 const DB_NAME = 'runquest';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const LS_PREFIX = 'rq:';
 
 // Stores IndexedDB :
 //  activities : activités normalisées (toutes sources), clé = id
 //  metrics    : métriques santé journalières, clé = [name, date]
+//  strength   : journaux de séances de musculation, clé = id
 let dbPromise = null;
 
 function openDb() {
@@ -23,6 +24,10 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains('metrics')) {
         db.createObjectStore('metrics', { keyPath: 'key' }); // key = `${name}|${date}`
+      }
+      if (!db.objectStoreNames.contains('strength')) {
+        const s = db.createObjectStore('strength', { keyPath: 'id' });
+        s.createIndex('date', 'date');
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -109,6 +114,27 @@ export async function getMetrics(name = null) {
   return filtered.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// ---- API musculation (journaux de séances) ----
+// log = { id, date (ISO), programId, sessionId, title, exercises:[{name, targetSets, targetReps, rest, sets:[{weight,reps}]}], durationSec }
+
+export async function saveStrengthLog(log) {
+  return idbPutAll('strength', [log]);
+}
+
+export async function getStrengthLogs() {
+  const all = await idbGetAll('strength');
+  return all.sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+export async function deleteStrengthLog(id) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const req = tx(db, 'strength', 'readwrite').delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // ---- État applicatif (localStorage) ----
 
 export function getState(key, fallback = null) {
@@ -140,16 +166,17 @@ const STATE_KEYS = ['settings', 'programs', 'gamification', 'strava', 'importLog
 // ---- Sauvegarde / restauration globale ----
 
 export async function exportBackup() {
-  const [activities, metrics] = await Promise.all([getActivities(), idbGetAll('metrics')]);
+  const [activities, metrics, strength] = await Promise.all([getActivities(), idbGetAll('metrics'), idbGetAll('strength')]);
   const state = {};
   for (const k of STATE_KEYS) state[k] = getState(k);
   return {
     app: 'runquest',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     state,
     activities,
     metrics,
+    strength,
   };
 }
 
@@ -157,17 +184,20 @@ export async function restoreBackup(data) {
   if (data?.app !== 'runquest') throw new Error('Fichier de sauvegarde non reconnu (attendu : export RunQuest)');
   await idbClear('activities');
   await idbClear('metrics');
+  await idbClear('strength');
   if (data.activities?.length) await idbPutAll('activities', data.activities);
   if (data.metrics?.length) await idbPutAll('metrics', data.metrics);
+  if (data.strength?.length) await idbPutAll('strength', data.strength);
   for (const k of STATE_KEYS) {
     if (data.state && data.state[k] !== null && data.state[k] !== undefined) setState(k, data.state[k]);
     else removeState(k);
   }
-  return { activities: data.activities?.length || 0, metrics: data.metrics?.length || 0 };
+  return { activities: data.activities?.length || 0, metrics: data.metrics?.length || 0, strength: data.strength?.length || 0 };
 }
 
 export async function wipeAll() {
   await idbClear('activities');
   await idbClear('metrics');
+  await idbClear('strength');
   for (const k of STATE_KEYS) removeState(k);
 }

@@ -81,6 +81,42 @@ Bouton **❓ Format** dans l'onglet Programme (exemple téléchargeable). Résum
 
 Donne ce format à ton coach (ou à Claude) pour générer tes futurs plans : import en un clic.
 
+## Musculation
+
+Une séance de type `muscu` contient une liste d'`exercises`. Dans l'app tu saisis
+poids/reps par série ; RunQuest :
+
+- **mémorise les charges d'une séance à l'autre** et affiche « ↩︎ Dernière fois : 60×10, 60×9 »
+  pour chaque exercice (rapprochement par nom d'exercice) ;
+- lance un **minuteur de récup automatique** après chaque série validée (2 min par défaut,
+  réglable ±15 s, avec bip + vibration à la fin ; durée personnalisable par exercice via `rest`) ;
+- pré-remplit la série suivante avec la charge de la précédente.
+
+Onglet **Stats → 💪 Muscu** : tonnage par séance, progression par exercice (poids max +
+1RM estimée Epley), records récents.
+
+Format muscu (à donner à une IA pour qu'elle génère/adapte tes plans) :
+```json
+{
+  "id": "w1-mer", "day": 2, "type": "muscu", "title": "Renfo bas du corps",
+  "estMin": 40, "time": "18:30",
+  "exercises": [
+    { "name": "Squat", "sets": 4, "reps": "8-10", "rest": 120 },
+    { "name": "Fentes haltères", "sets": 3, "reps": "10", "rest": 90 }
+  ]
+}
+```
+
+## Agenda
+
+Onglet **📅 Agenda** : toutes tes séances (course **et** muscu) en vues **Jour / Semaine / Mois**.
+Horaires par défaut : runs à **05:00**, muscu à **18:30** (le soir) — surchargables par séance
+via le champ `time` (HH:MM). Un tap sur une séance muscu ouvre la saisie, sur un run ouvre le programme.
+
+Règle de placement conseillée (à l'IA qui génère le plan) : muscu le soir des jours **sans run**,
+ou le soir des jours où le run du matin est une **EF** ; jamais muscu le jour d'une grosse séance
+de qualité ou de la sortie longue.
+
 ## Replanification intelligente
 
 Si tu réalises une séance un autre jour que prévu, RunQuest protège l'**espacement**

@@ -11,6 +11,7 @@ import {
 } from '../analytics.js';
 import { makeChart, PALETTE, paceAxis, paceTooltip, weekLabel, scatterInteraction } from '../charts.js';
 import * as A from '../analysis-text.js';
+import { getStrengthLogs, totals as strTotals, tonnageSeries, exerciseProgress, recentPRs, e1rm } from '../strength.js';
 
 const TABS = [
   { id: 'perf', label: '⚡ Performance' },
@@ -18,6 +19,7 @@ const TABS = [
   { id: 'health', label: '🫀 Santé' },
   { id: 'tech', label: '🦶 Technique' },
   { id: 'records', label: '🏅 Records' },
+  { id: 'muscu', label: '💪 Muscu' },
 ];
 
 export function renderStats(root, ctx) {
@@ -28,12 +30,90 @@ export function renderStats(root, ctx) {
       onclick: () => ctx.navigate('stats', { tab: t.id }),
     }, t.label))));
 
+  if (tab === 'muscu') { renderMuscu(root, ctx); return; }
+
   if (!runsOnly(ctx.activities).length) {
     root.append(el('div', { class: 'card muted' }, 'Pas encore de données de course. Importe tes activités dans Réglages.'));
     return;
   }
 
   ({ perf: renderPerf, load: renderLoad, health: renderHealth, tech: renderTech, records: renderRecords }[tab] || renderPerf)(root, ctx);
+}
+
+// ---------- MUSCU ----------
+
+function renderMuscu(root, ctx) {
+  root.append(el('div', { class: 'card muted' }, 'Chargement des données muscu…'));
+  getStrengthLogs().then(logs => {
+    root.querySelector('.card.muted')?.remove();
+    if (!logs.length) {
+      root.append(el('div', { class: 'card muted' },
+        'Aucune séance de musculation enregistrée pour l’instant. Ajoute des séances « muscu » à ton programme (Programme → ❓ Format) puis valide-les.'));
+      return;
+    }
+    const tot = strTotals(logs, 30);
+    root.append(el('div', { class: 'tiles' },
+      el('div', { class: 'tile' }, el('div', { class: 'tile-icon' }, '🏋️'), el('div', { class: 'tile-value' }, String(tot.sessions30)), el('div', { class: 'tile-label' }, 'séances (30 j)')),
+      el('div', { class: 'tile' }, el('div', { class: 'tile-icon' }, '⚖️'), el('div', { class: 'tile-value' }, (tot.tonnage30 / 1000).toFixed(1) + ' t'), el('div', { class: 'tile-label' }, 'tonnage (30 j)')),
+      el('div', { class: 'tile' }, el('div', { class: 'tile-icon' }, '📦'), el('div', { class: 'tile-value' }, (tot.tonnageAll / 1000).toFixed(1) + ' t'), el('div', { class: 'tile-label' }, 'tonnage total')),
+      el('div', { class: 'tile' }, el('div', { class: 'tile-icon' }, '🎯'), el('div', { class: 'tile-value' }, String(tot.exercisesTracked)), el('div', { class: 'tile-label' }, 'exercices suivis')),
+    ));
+
+    // tonnage par séance
+    const ton = tonnageSeries(logs);
+    if (ton.length >= 2) {
+      const c = chartCard(root, 'st-tonnage', '⚖️ Tonnage par séance', 'Charge totale soulevée (Σ poids × reps). En hausse = tu progresses en volume de travail.');
+      makeChart(c, {
+        type: 'bar',
+        data: {
+          labels: ton.map(t => fmtDate(t.date, { day: 'numeric', month: 'short' })),
+          datasets: [{ label: 'kg', data: ton.map(t => t.tonnage), backgroundColor: '#5e60ce', borderRadius: 5 }],
+        },
+        options: { plugins: { legend: { display: false }, tooltip: { callbacks: { label: c2 => ` ${ton[c2.dataIndex].tonnage.toLocaleString('fr-FR')} kg · ${ton[c2.dataIndex].title || ''}` } } } },
+      });
+    }
+
+    // progression par exercice (sélecteur)
+    const prog = exerciseProgress(logs).filter(e => e.points.length >= 2);
+    if (prog.length) {
+      const card = el('div', { class: 'card' }, el('div', { class: 'card-title' }, '📈 Progression par exercice'));
+      const select = el('select', { class: 'input' }, ...prog.map((e, i) => el('option', { value: String(i) }, `${e.name} (${e.sessions} séances)`)));
+      const chartWrap = el('div', { class: 'chart-wrap' }, el('canvas', { id: 'st-exprog' }));
+      const info = el('div', { class: 'muted small', style: 'margin-top:6px' });
+      card.append(select, chartWrap, info);
+      root.append(card);
+      const draw = () => {
+        const e = prog[+select.value];
+        makeChart(document.getElementById('st-exprog'), {
+          type: 'line',
+          data: {
+            labels: e.points.map(p => fmtDate(p.date, { day: 'numeric', month: 'short' })),
+            datasets: [
+              { label: 'poids max (kg)', data: e.points.map(p => p.weight), borderColor: '#5e60ce', backgroundColor: 'rgba(94,96,206,.1)', fill: true, tension: 0.25, pointRadius: 3, yAxisID: 'y' },
+              { label: '1RM estimée', data: e.points.map(p => p.e1rm ? Math.round(p.e1rm) : null), borderColor: PALETTE.primary, borderDash: [5, 4], tension: 0.25, pointRadius: 2, yAxisID: 'y' },
+            ],
+          },
+          options: { scales: { x: { ticks: { maxTicksLimit: 7 } }, y: { title: { display: true, text: 'kg' } } } },
+        });
+        info.textContent = e.best ? `Record : ${e.best.weight} kg × ${e.best.reps} (1RM est. ${Math.round(e.best.e1rm)} kg) le ${fmtDate(e.best.date, { day: 'numeric', month: 'short', year: '2-digit' })}` : '';
+      };
+      select.addEventListener('change', draw);
+      draw();
+    }
+
+    // records récents
+    const prs = recentPRs(logs, 45);
+    if (prs.length) {
+      root.append(el('div', { class: 'card' },
+        el('div', { class: 'card-title' }, '🏅 Records récents (45 j)'),
+        ...prs.slice(0, 8).map(pr => el('div', { class: 'top-row' },
+          el('span', { class: 'top-icon' }, '💪'),
+          el('div', { class: 'top-main' },
+            el('div', { class: 'top-label' }, pr.name),
+            el('div', { class: 'top-value' }, `${pr.weight} kg × ${pr.reps} · 1RM est. ${Math.round(pr.e1rm)} kg`)),
+          el('span', { class: 'muted small' }, fmtDate(pr.date, { day: 'numeric', month: 'short' }))))));
+    }
+  });
 }
 
 function cmpCell(label, value, deltaNode) {

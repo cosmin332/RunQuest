@@ -11,6 +11,7 @@
   --pink: #ee4266;
   --yellow: #ffd23f;
   --teal: #3bceac;
+  --muscu: #5e60ce;
   --bg: #f4f6fb;
   --bg-accent: linear-gradient(135deg, #fff7f2, #f0f4ff);
   --card: #ffffff;
@@ -77,10 +78,10 @@ h2 { font-size: 1.15rem; }
 .nav-btn {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: .62rem; font-weight: 600;
-  padding: 4px 8px; border-radius: 10px; min-width: 52px;
+  color: var(--muted); font-size: .58rem; font-weight: 600;
+  padding: 4px 3px; border-radius: 10px; min-width: 44px; flex: 1;
 }
-.nav-ico { font-size: 1.25rem; filter: grayscale(.6); transition: transform .15s; }
+.nav-ico { font-size: 1.2rem; filter: grayscale(.6); transition: transform .15s; }
 .nav-btn.active { color: var(--primary); }
 .nav-btn.active .nav-ico { filter: none; transform: scale(1.15); }
 
@@ -481,6 +482,71 @@ h2 { font-size: 1.15rem; }
 #toast.success { background: var(--green); }
 #toast.error { background: var(--pink); }
 .confetti-canvas { position: fixed; inset: 0; z-index: 300; pointer-events: none; }
+
+/* ---------- Musculation : séance ---------- */
+.wk-head .type-pill { display: inline-block; }
+.seg-muscu { border-left-color: var(--muscu); }
+.ex-card { padding: 12px 14px; }
+.ex-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ex-name { font-weight: 700; font-size: .95rem; }
+.ex-target { font-size: .8rem; font-weight: 700; color: var(--muscu); white-space: nowrap; }
+.last-time { font-size: .74rem; color: var(--blue); background: #eef1ff; border-radius: 8px; padding: 5px 8px; margin: 6px 0; }
+.last-time.muted { color: var(--muted); background: var(--bg); }
+.sets-head, .set-row { display: grid; grid-template-columns: 42px 1fr 1fr 44px; gap: 8px; align-items: center; }
+.sets-head { font-size: .66rem; color: var(--muted); font-weight: 700; text-transform: uppercase; margin: 4px 0; padding: 0 2px; }
+.set-row { margin-bottom: 6px; }
+.set-num { text-align: center; font-weight: 800; color: var(--muted); }
+.set-input { text-align: center; padding: 9px 4px; font-size: .95rem; }
+.set-done .set-input { background: #f2fbf6; border-color: #a7f3d0; }
+.set-check {
+  width: 40px; height: 40px; border-radius: 10px; border: 2px solid var(--border);
+  background: #fff; cursor: pointer; font-size: 1.1rem; font-weight: 800; color: #fff;
+}
+.set-check.checked { background: var(--muscu); border-color: var(--muscu); }
+.add-set { width: 100%; margin-top: 2px; color: var(--muscu); }
+
+/* Minuteur de récupération (flottant) */
+.rest-timer {
+  position: fixed; left: 50%; bottom: calc(78px + var(--safe-bottom)); transform: translateX(-50%);
+  z-index: 150; background: var(--card); border: 1px solid var(--border);
+  border-radius: 18px; box-shadow: 0 8px 30px rgba(31,41,55,.22);
+  padding: 14px 18px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  width: min(320px, 92vw); animation: slideUp .2s ease;
+}
+.rest-timer.hidden { display: none; }
+.rest-timer.rest-done { border-color: var(--green); box-shadow: 0 8px 30px rgba(14,173,105,.3); }
+.rest-sub { font-size: .78rem; font-weight: 600; color: var(--muted); text-align: center; }
+.rest-ring { width: 96px; height: 96px; border-radius: 50%; display: flex; align-items: center; justify-content: center; position: relative; }
+.rest-ring-fill { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--muscu) 0deg, #e9edf5 0deg); }
+.rest-time { position: relative; z-index: 1; width: 74px; height: 74px; background: var(--card); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 800; }
+.rest-controls { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.rest-controls .btn { padding: 7px 10px; }
+
+/* ---------- Agenda ---------- */
+.agenda-nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.agenda-nav .btn:nth-child(2) { flex: 1; font-weight: 700; text-transform: capitalize; }
+.ag-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; cursor: pointer; border-top: 1px solid var(--border); }
+.ag-item:first-child { border-top: none; }
+.ag-done { opacity: .55; }
+.ag-time { font-weight: 800; font-size: .78rem; color: var(--muted); width: 44px; flex-shrink: 0; }
+.ag-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.ag-body { flex: 1; min-width: 0; }
+.ag-title { font-weight: 600; font-size: .85rem; }
+.ag-day { padding: 10px 14px; }
+.ag-day-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.ag-day-name { font-weight: 800; font-size: .85rem; }
+.ag-today { border: 2px solid var(--primary); }
+.month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.month-dow { text-align: center; font-size: .62rem; font-weight: 700; color: var(--muted); padding-bottom: 2px; }
+.month-cell { aspect-ratio: 1; border-radius: 8px; background: var(--bg); padding: 3px; display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+.month-cell.empty { background: none; cursor: default; }
+.month-cell.has { background: #eef1ff; }
+.month-cell.today { outline: 2px solid var(--primary); }
+.month-num { font-size: .72rem; font-weight: 700; }
+.month-dots { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
+.month-dot { width: 6px; height: 6px; border-radius: 50%; }
+.ag-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: .72rem; color: var(--muted); }
+.ag-legend-item { display: flex; align-items: center; gap: 4px; }
 
 @media (min-width: 720px) {
   .tiles { grid-template-columns: repeat(6, 1fr); }
