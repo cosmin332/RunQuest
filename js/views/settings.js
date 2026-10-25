@@ -144,6 +144,12 @@ export function renderSettings(root, ctx) {
   );
   const gLast = garmin.lastSync();
   if (gLast) garminCard.append(el('div', { class: 'strava-status ok' }, `✅ Dernière sync Garmin : ${fmtDate(gLast)}`));
+  const gDiag = importLog.garminDiag;
+  if (Array.isArray(gDiag) && gDiag.length) {
+    garminCard.append(el('details', { class: 'garmin-diag' },
+      el('summary', { class: 'small muted' }, '🔧 Diagnostic du dernier sync'),
+      el('pre', { class: 'code-block small' }, gDiag.join('\n'))));
+  }
   garminCard.append(el('div', { class: 'modal-actions' },
     el('button', {
       class: 'btn btn-primary',
@@ -154,14 +160,17 @@ export function renderSettings(root, ctx) {
         try {
           const data = await garmin.fetchGarmin(garmin.getConfig(), msg => { btn.textContent = msg; });
           const { activities, metrics } = garmin.mapToRunQuest(data);
+          const byName = {};
+          for (const m of metrics) byName[m.name] = (byName[m.name] || 0) + 1;
+          const diag = [...(data.diag || []), 'Mappé → ' + (Object.entries(byName).map(([k, v]) => `${k}:${v}`).join(', ') || 'aucune métrique santé')];
           if (!activities.length && !metrics.length) {
-            toast('Le proxy n’a renvoyé aucune donnée sur la période. Vérifie l’adresse et le code secret.', 'info', 6000);
+            toast('Le proxy n’a renvoyé aucune donnée sur la période. Vérifie l’adresse et le code secret, puis le diagnostic.', 'info', 6000);
           } else {
             const r = await ingestActivities(activities);
             if (metrics.length) await saveMetrics(metrics);
-            setState('importLog', { ...getState('importLog', {}), garmin: new Date().toISOString() });
             toast(`Garmin : ${ingestReport(r)} · ${metrics.length} points santé/technique`, 'success', 5000);
           }
+          setState('importLog', { ...getState('importLog', {}), garmin: new Date().toISOString(), garminDiag: diag });
           ctx.refresh();
         } catch (err) {
           toast('Garmin : ' + err.message, 'error', 6000);

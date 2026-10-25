@@ -105,14 +105,32 @@ function convertActivity(a, detail) {
 export async function fetchGarmin(cfg, onProgress) {
   const base = cfg.base.replace(/\/+$/, '');
   const prog = (m, p) => { try { onProgress && onProgress(m, p); } catch (e) {} };
-  async function api(path, params) {
+  const diag = []; // trace par endpoint pour le diagnostic affiché dans Réglages
+  function buildUrl(path, params) {
     const u = new URL(base + '/garmin' + path);
     if (params) for (const k in params) if (params[k] != null) u.searchParams.set(k, params[k]);
     if (cfg.secret) u.searchParams.set('s', cfg.secret);
-    const r = await fetch(u.toString(), { headers: { Accept: 'application/json' } });
+    return u.toString();
+  }
+  async function api(path, params) {
+    const r = await fetch(buildUrl(path, params), { headers: { Accept: 'application/json' } });
     if (!r.ok) throw new Error(path.split('?')[0] + ' → HTTP ' + r.status);
     const t = await r.text();
     return t ? JSON.parse(t) : null;
+  }
+  // Variante instrumentée : ne jette pas, enregistre le statut + le nb de lignes.
+  async function apiTry(label, path, params) {
+    try {
+      const r = await fetch(buildUrl(path, params), { headers: { Accept: 'application/json' } });
+      const t = await r.text();
+      let body = null; try { body = t ? JSON.parse(t) : null; } catch (e) {}
+      const rows = Array.isArray(body) ? body.length : (body && typeof body === 'object' ? asList(body).length : 0);
+      diag.push(`${label} : HTTP ${r.status}${r.ok ? ` · ${rows} ligne${rows > 1 ? 's' : ''}` : ' ⚠️'}`);
+      return r.ok ? body : null;
+    } catch (e) {
+      diag.push(`${label} : échec réseau (${e.message})`);
+      return null;
+    }
   }
 
   const days = cfg.days || 400, wdays = Math.min(cfg.days || 400, 180);
@@ -128,35 +146,42 @@ export async function fetchGarmin(cfg, onProgress) {
     if (batch.length < 50 || offset > 2000) break;
   }
 
-  const activities = []; let detailed = 0; const DETAIL = 60;
+  const activities = []; let detailed = 0, detailOk = 0, runVo2 = 0; const DETAIL = 60;
   for (let i = 0; i < rawActs.length; i++) {
     const a = rawActs[i];
     let tkey = ''; const at = a.activityType; if (at && typeof at === 'object') tkey = (at.typeKey || '').toLowerCase();
     let detail = null;
     if (tkey.includes('run') && detailed < DETAIL) {
-      try { detail = await api('/activity-service/activity/' + pick(a, ['activityId', 'id'])); detailed++; } catch (e) {}
+      detailed++;
+      try { detail = await api('/activity-service/activity/' + pick(a, ['activityId', 'id'])); if (detail) detailOk++; } catch (e) {}
       prog('Détail des courses… (' + detailed + ')', 10 + Math.round(detailed / Math.max(1, rawActs.length) * 40));
     }
-    activities.push(convertActivity(a, detail));
+    const conv = convertActivity(a, detail);
+    if (conv.vo2max) runVo2++;
+    activities.push(conv);
   }
   activities.sort((x, y) => (x.start || '') < (y.start || '') ? -1 : 1);
   const runs = activities.filter(a => a.type === 'running');
+  diag.push(`Activités : ${rawActs.length} (détails course ${detailOk}/${detailed} OK, dont VO₂max ${runVo2})`);
 
   prog('Sommeil, HRV, stress, FC repos…', 55);
   const ws = isoD(daysAgo(wdays)), we = isoD(new Date());
   const daily = {};
   const merge = (rows, fn) => asList(rows).forEach(r => { if (!r || typeof r !== 'object') return; let d = pick(r, ['calendarDate', 'calendar_date', 'date']); if (!d) return; d = String(d).slice(0, 10); const row = daily[d] || (daily[d] = { date: d }); fn(r, row); });
-  const safe = async (fn) => { try { await fn(); } catch (e) {} };
 
-  await safe(async () => merge(await api('/usersummary-service/v2/dailysummaries', { startDate: ws, endDate: we }), (r, row) => { row.resting_hr = pick(r, ['restingHeartRate']); row.steps = pick(r, ['totalSteps', 'steps']); }));
-  await safe(async () => merge(await api('/usersummary-service/stats/stress/daily/' + ws + '/' + we), (r, row) => { row.stress_avg = pick(r, ['averageStressLevel', 'overallStressLevel', 'value']); }));
-  await safe(async () => merge(await api('/sleep-service/sleep/dailySleepSummariesByDate', { startDate: ws, endDate: we }), (r, row) => {
+  const dailyResp = await apiTry('Résumés quotidiens (FC repos)', '/usersummary-service/v2/dailysummaries', { startDate: ws, endDate: we });
+  if (dailyResp) merge(dailyResp, (r, row) => { row.resting_hr = pick(r, ['restingHeartRate']); row.steps = pick(r, ['totalSteps', 'steps']); });
+  const stressResp = await apiTry('Stress', '/usersummary-service/stats/stress/daily/' + ws + '/' + we);
+  if (stressResp) merge(stressResp, (r, row) => { row.stress_avg = pick(r, ['averageStressLevel', 'overallStressLevel', 'value']); });
+  const sleepResp = await apiTry('Sommeil', '/sleep-service/sleep/dailySleepSummariesByDate', { startDate: ws, endDate: we });
+  if (sleepResp) merge(sleepResp, (r, row) => {
     const deep = pick(r, ['deepSleepSeconds'], 0) || 0, light = pick(r, ['lightSleepSeconds'], 0) || 0, rem = pick(r, ['remSleepSeconds'], 0) || 0;
     row.sleep_s = (deep + light + rem) || pick(r, ['sleepTimeSeconds']); row.deep_s = deep || null; row.light_s = light || null; row.rem_s = rem || null; row.awake_s = pick(r, ['awakeSleepSeconds']);
     const sc = pick(r, ['sleepScores']); row.sleep_score = (sc && typeof sc === 'object') ? pick(sc, ['overallScore']) : pick(r, ['sleepScore', 'overallSleepScore']);
-  }));
+  });
   const hrvArr = [];
-  await safe(async () => asList(await api('/hrv-service/hrv/daily/' + ws + '/' + we)).forEach(r => { const d = pick(r, ['calendarDate', 'date']); const v = pick(r, ['weeklyAvg', 'lastNightAvg', 'hrvValue', 'avgHrv', 'value']); if (d && v) hrvArr.push({ date: String(d).slice(0, 10), value: Math.round(v) }); }));
+  const hrvResp = await apiTry('HRV', '/hrv-service/hrv/daily/' + ws + '/' + we);
+  if (hrvResp) asList(hrvResp).forEach(r => { const d = pick(r, ['calendarDate', 'date']); const v = pick(r, ['weeklyAvg', 'lastNightAvg', 'hrvValue', 'avgHrv', 'value']); if (d && v) hrvArr.push({ date: String(d).slice(0, 10), value: Math.round(v) }); });
 
   let dailyRows = Object.values(daily).map(r => { const o = {}; for (const k in r) if (r[k] != null) o[k] = r[k]; return o; }).filter(r => Object.keys(r).length > 1);
   dailyRows.sort((a, b) => a.date < b.date ? 1 : -1);
@@ -166,9 +191,10 @@ export async function fetchGarmin(cfg, onProgress) {
   if (hrvArr.length) { const m = {}; hrvArr.forEach(x => m[x.date] = x); series.hrv = Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1); }
   const vo = {}; runs.forEach(a => { if (a.vo2max && a.start) { const d = a.start.slice(0, 10); if (vo[d] == null) vo[d] = a.vo2max; } });
   if (Object.keys(vo).length) series.vo2max = Object.keys(vo).sort().map(d => ({ date: d, value: vo[d] }));
+  diag.push(`FC repos : ${dailyRows.filter(r => r.resting_hr != null).length} j · Sommeil : ${dailyRows.filter(r => r.sleep_s != null).length} nuits · HRV : ${hrvArr.length} · VO₂max : ${Object.keys(vo).length}`);
 
   prog('Terminé ✓', 100);
-  return { generated_at: new Date().toISOString().slice(0, 19), source: 'garmin-personal-api', activities, daily: dailyRows, series };
+  return { generated_at: new Date().toISOString().slice(0, 19), source: 'garmin-personal-api', activities, daily: dailyRows, series, diag };
 }
 
 // ---------- Mapping vers le modèle RunQuest ----------

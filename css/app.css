@@ -569,6 +569,10 @@ h2 { font-size: 1.15rem; }
   .modal { border-radius: 20px; }
 }
 
+/* ---------- Diagnostic sync Garmin ---------- */
+.garmin-diag { margin-top: 8px; }
+.garmin-diag pre { white-space: pre-wrap; word-break: break-word; }
+
 /* ---------- Jauge demi-cercle (ACWR) ---------- */
 .gauge-wrap { position: relative; height: 140px; }
 .gauge-wrap canvas { position: absolute; inset: 0; }
