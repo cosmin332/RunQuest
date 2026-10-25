@@ -187,46 +187,49 @@ export async function fetchGarmin(cfg, onProgress) {
   const daily = {};
   const merge = (rows, fn) => asList(rows).forEach(r => { if (!r || typeof r !== 'object') return; let d = pick(r, ['calendarDate', 'calendar_date', 'date']); if (!d) return; d = String(d).slice(0, 10); const row = daily[d] || (daily[d] = { date: d }); fn(r, row); });
 
-  // Résumés quotidiens : FC repos / stress / pas sont imbriqués (heartRate, stress…) → lecture en profondeur.
+  // Résumés quotidiens : FC repos / stress sont imbriqués (ex. heartRate) → lecture en profondeur.
   const dailyResp = await apiTry('Résumés quotidiens', '/usersummary-service/v2/dailysummaries', { startDate: ws, endDate: we });
   if (dailyResp) {
     const arr = asList(dailyResp);
-    if (arr[0]) diag.push('• 1er résumé : ' + JSON.stringify(arr[0]).slice(0, 420));
+    const sampleHr = arr.map(r => r && r.heartRate).find(h => h && typeof h === 'object' && Object.keys(h).length);
+    if (sampleHr) diag.push('• heartRate : ' + JSON.stringify(sampleHr).slice(0, 240));
+    const RHR = ['restingHeartRate', 'restingHr', 'resting', 'restingHeartRateInBeatsPerMinute', 'restBpm', 'restingBpm', 'rhr', 'restingHeartRateValue'];
     merge(dailyResp, (r, row) => {
-      row.resting_hr = deepNum(r, ['restingHeartRate', 'restingHr', 'resting']);
-      row.steps = deepNum(r, ['totalSteps', 'steps']);
-      row.stress_avg = deepNum(r, ['avgStressLevel', 'averageStressLevel', 'overallStressLevel']);
+      row.resting_hr = deepNum(r, RHR, 3);
+      row.steps = deepNum(r, ['totalSteps', 'steps'], 3);
+      row.stress_avg = deepNum(r, ['avgStressLevel', 'averageStressLevel', 'overallStressLevel'], 3);
     });
   }
-  // Sommeil : les chemins Connect renvoient 400 sur l'API Personal — on réduit la
-  // fenêtre (28 j) et on teste une variante. Les dumps révèlent la bonne forme.
-  const sws = isoD(daysAgo(Math.min(wdays, 28)));
-  let sleepResp = await apiTry('Sommeil (28j)', '/sleep-service/sleep/dailySleepSummariesByDate', { startDate: sws, endDate: we });
-  if (!sleepResp) sleepResp = await apiTry('Sommeil (wellness)', '/wellness-service/wellness/dailySleepsByDate', { startDate: sws, endDate: we });
-  if (sleepResp) {
-    const arr = asList(sleepResp);
-    if (arr[0]) diag.push('• 1re nuit : ' + JSON.stringify(arr[0]).slice(0, 320));
-    merge(sleepResp, (r, row) => {
-      const deep = deepNum(r, ['deepSleepSeconds']) || 0, light = deepNum(r, ['lightSleepSeconds']) || 0, rem = deepNum(r, ['remSleepSeconds']) || 0;
-      row.sleep_s = (deep + light + rem) || deepNum(r, ['sleepTimeSeconds']); row.deep_s = deep || null; row.light_s = light || null; row.rem_s = rem || null; row.awake_s = deepNum(r, ['awakeSleepSeconds']);
-      row.sleep_score = deepNum(r, ['overallScore', 'sleepScore', 'overallSleepScore']);
-    });
+
+  // Sommeil : l'endpoint limite la plage (~28 j) → on boucle par fenêtres de 28 j.
+  // Le résumé ne donne que la durée totale (sleepTimeSeconds), pas les stades.
+  prog('Sommeil…', 62);
+  let sleepRows = [];
+  const firstSleep = await apiTry('Sommeil (0-28j)', '/sleep-service/sleep/dailySleepSummariesByDate', { startDate: isoD(daysAgo(28)), endDate: we });
+  if (firstSleep) {
+    sleepRows = asList(firstSleep);
+    for (let back = 28; back < wdays; back += 28) {
+      try { sleepRows = sleepRows.concat(asList(await api('/sleep-service/sleep/dailySleepSummariesByDate', { startDate: isoD(daysAgo(Math.min(wdays, back + 28))), endDate: isoD(daysAgo(back)) }))); }
+      catch (e) { break; }
+    }
   }
+  if (sleepRows[0]) diag.push('• 1re nuit : ' + JSON.stringify(sleepRows[0]).slice(0, 280));
+  merge(sleepRows, (r, row) => {
+    const deep = deepNum(r, ['deepSleepSeconds']) || 0, light = deepNum(r, ['lightSleepSeconds']) || 0, rem = deepNum(r, ['remSleepSeconds']) || 0;
+    row.sleep_s = (deep + light + rem) || deepNum(r, ['sleepTimeSeconds']);
+    row.deep_s = deep || null; row.light_s = light || null; row.rem_s = rem || null; row.awake_s = deepNum(r, ['awakeSleepSeconds']);
+    row.sleep_score = deepNum(r, ['overallScore', 'sleepScore', 'overallSleepScore']);
+  });
+
+  prog('HRV…', 75);
   const hrvArr = [];
   const hrvResp = await apiTry('HRV', '/hrv-service/hrv/daily/' + ws + '/' + we);
   if (hrvResp) asList(hrvResp).forEach(r => { const d = pick(r, ['calendarDate', 'date']); const v = pick(r, ['weeklyAvg', 'lastNightAvg', 'hrvValue', 'avgHrv', 'value']); if (d && v) hrvArr.push({ date: String(d).slice(0, 10), value: Math.round(v) }); });
 
-  // VO₂max : endpoint dédié (l'API Personal ne la met pas dans le détail d'activité)
-  prog('VO₂max…', 80);
+  // VO₂max : non exposée par l'API Personal (détail d'activité sans vO2MaxValue, maxmet 404).
   const vo = {};
   runs.forEach(a => { if (a.vo2max && a.start) { const d = a.start.slice(0, 10); if (vo[d] == null) vo[d] = a.vo2max; } });
-  const maxmetResp = await apiTry('VO₂max (maxmet)', '/metrics-service/metrics/maxmet/daily/' + ws + '/' + we);
-  if (maxmetResp) asList(maxmetResp).forEach(r => {
-    const d = pick(r, ['calendarDate', 'date']);
-    const g = r.generic || r.running || r;
-    const v = pick(g, ['vo2MaxValue', 'vo2MaxPreciseValue', 'value']);
-    if (d && v) vo[String(d).slice(0, 10)] = Math.round(v);
-  });
+  if (!Object.keys(vo).length) diag.push('VO₂max : non disponible via l’API Personal');
 
   let dailyRows = Object.values(daily).map(r => { const o = {}; for (const k in r) if (r[k] != null) o[k] = r[k]; return o; }).filter(r => Object.keys(r).length > 1);
   dailyRows.sort((a, b) => a.date < b.date ? 1 : -1);

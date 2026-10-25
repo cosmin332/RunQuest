@@ -708,16 +708,19 @@ function renderHealth(root, ctx) {
     });
   }
 
-  // Sommeil
+  // Sommeil — empilé par stades si disponibles, sinon durée totale (ex. Garmin : total seul).
   const sleep = metricSeries(metrics, 'sleep', 60);
   if (sleep.length > 3) {
     any = true;
     const avg = mean(sleep.map(m => m.total).filter(Boolean));
-    const canvas = chartCard(root, 'st-sleep', '😴 Sommeil (60 nuits)', 'Empilé : profond + paradoxal (REM) + léger.', true, A.analyzeSleep(avg));
-    makeChart(canvas, {
+    const hasStages = sleep.some(m => m.deep || m.rem || m.core);
+    const labels = sleep.map(m => fmtDate(m.date, { day: 'numeric', month: 'short' }));
+    const canvas = chartCard(root, 'st-sleep', '😴 Sommeil (60 nuits)',
+      hasStages ? 'Empilé : profond + paradoxal (REM) + léger.' : 'Durée totale par nuit (stades non fournis par la source).', true, A.analyzeSleep(avg));
+    makeChart(canvas, hasStages ? {
       type: 'bar',
       data: {
-        labels: sleep.map(m => fmtDate(m.date, { day: 'numeric', month: 'short' })),
+        labels,
         datasets: [
           { label: 'Profond', data: sleep.map(m => m.deep), backgroundColor: PALETTE.purple, stack: 's' },
           { label: 'REM', data: sleep.map(m => m.rem), backgroundColor: PALETTE.blue, stack: 's' },
@@ -729,6 +732,18 @@ function renderHealth(root, ctx) {
           x: { stacked: true, ticks: { maxTicksLimit: 8 } },
           y: { stacked: true, title: { display: true, text: 'heures' }, suggestedMax: 10 },
         },
+      },
+    } : {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Sommeil', data: sleep.map(m => m.total ? +m.total.toFixed(1) : null), backgroundColor: PALETTE.blue, borderRadius: 4 },
+          { label: 'moy. 7 j', type: 'line', data: rollingMean(sleep.map(m => m.total), 7).map(v => v ? +v.toFixed(1) : null), borderColor: PALETTE.purple, pointRadius: 0, borderWidth: 2.5, tension: 0.3 },
+        ],
+      },
+      options: {
+        scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { title: { display: true, text: 'heures' }, suggestedMax: 10, beginAtZero: true } },
       },
     });
   }
