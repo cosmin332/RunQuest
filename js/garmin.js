@@ -118,15 +118,22 @@ export async function fetchGarmin(cfg, onProgress) {
     const t = await r.text();
     return t ? JSON.parse(t) : null;
   }
-  // Variante instrumentée : ne jette pas, enregistre le statut + le nb de lignes.
+  // Variante instrumentée : ne jette pas ; enregistre statut, nb de lignes,
+  // champs de la 1re ligne (si 200) ou extrait du corps d'erreur (si ≠ 200).
   async function apiTry(label, path, params) {
     try {
       const r = await fetch(buildUrl(path, params), { headers: { Accept: 'application/json' } });
       const t = await r.text();
       let body = null; try { body = t ? JSON.parse(t) : null; } catch (e) {}
-      const rows = Array.isArray(body) ? body.length : (body && typeof body === 'object' ? asList(body).length : 0);
-      diag.push(`${label} : HTTP ${r.status}${r.ok ? ` · ${rows} ligne${rows > 1 ? 's' : ''}` : ' ⚠️'}`);
-      return r.ok ? body : null;
+      if (!r.ok) {
+        diag.push(`${label} : HTTP ${r.status} ⚠️ ${String(t).replace(/\s+/g, ' ').slice(0, 110)}`);
+        return null;
+      }
+      const arr = asList(body);
+      const first = arr.length ? arr[0] : body;
+      const keys = first && typeof first === 'object' ? Object.keys(first).slice(0, 14).join(',') : '';
+      diag.push(`${label} : HTTP 200 · ${arr.length} ligne${arr.length > 1 ? 's' : ''}${keys ? ` · champs: ${keys}` : ''}`);
+      return body;
     } catch (e) {
       diag.push(`${label} : échec réseau (${e.message})`);
       return null;
@@ -183,13 +190,24 @@ export async function fetchGarmin(cfg, onProgress) {
   const hrvResp = await apiTry('HRV', '/hrv-service/hrv/daily/' + ws + '/' + we);
   if (hrvResp) asList(hrvResp).forEach(r => { const d = pick(r, ['calendarDate', 'date']); const v = pick(r, ['weeklyAvg', 'lastNightAvg', 'hrvValue', 'avgHrv', 'value']); if (d && v) hrvArr.push({ date: String(d).slice(0, 10), value: Math.round(v) }); });
 
+  // VO₂max : endpoint dédié (l'API Personal ne la met pas dans le détail d'activité)
+  prog('VO₂max…', 80);
+  const vo = {};
+  runs.forEach(a => { if (a.vo2max && a.start) { const d = a.start.slice(0, 10); if (vo[d] == null) vo[d] = a.vo2max; } });
+  const maxmetResp = await apiTry('VO₂max (maxmet)', '/metrics-service/metrics/maxmet/daily/' + ws + '/' + we);
+  if (maxmetResp) asList(maxmetResp).forEach(r => {
+    const d = pick(r, ['calendarDate', 'date']);
+    const g = r.generic || r.running || r;
+    const v = pick(g, ['vo2MaxValue', 'vo2MaxPreciseValue', 'value']);
+    if (d && v) vo[String(d).slice(0, 10)] = Math.round(v);
+  });
+
   let dailyRows = Object.values(daily).map(r => { const o = {}; for (const k in r) if (r[k] != null) o[k] = r[k]; return o; }).filter(r => Object.keys(r).length > 1);
   dailyRows.sort((a, b) => a.date < b.date ? 1 : -1);
 
-  prog('Progression (VO₂max)…', 85);
+  prog('Progression…', 90);
   const series = {};
   if (hrvArr.length) { const m = {}; hrvArr.forEach(x => m[x.date] = x); series.hrv = Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1); }
-  const vo = {}; runs.forEach(a => { if (a.vo2max && a.start) { const d = a.start.slice(0, 10); if (vo[d] == null) vo[d] = a.vo2max; } });
   if (Object.keys(vo).length) series.vo2max = Object.keys(vo).sort().map(d => ({ date: d, value: vo[d] }));
   diag.push(`FC repos : ${dailyRows.filter(r => r.resting_hr != null).length} j · Sommeil : ${dailyRows.filter(r => r.sleep_s != null).length} nuits · HRV : ${hrvArr.length} · VO₂max : ${Object.keys(vo).length}`);
 
