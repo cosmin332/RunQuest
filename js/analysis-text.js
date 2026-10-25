@@ -273,3 +273,41 @@ export function analyzeEconomy(eco) {
   if (c.delta > 0) return box('good', `Économie de course en amélioration : tu transformes mieux ton énergie en vitesse. C'est exactement ce qui fait baisser les chronos à VO₂max constante.`);
   return box('info', `Économie de course stable. La qualité (seuil, VMA) et la technique (cadence, gainage) l'amélioreront.`);
 }
+
+// ---------- Idées reprises du dépôt STats ----------
+
+// Allure vs FC : l'efficacité (vitesse par battement) s'améliore-t-elle dans le temps ?
+export function analyzePaceHr(points) {
+  if (points.length < 6) return null;
+  const effic = points.map(p => (p.km * 1000 / (p.pace || 1)) / p.hr); // m/s par bpm (approché)
+  const c = change(effic);
+  if (!c || !c.avg) return null;
+  const pct = c.delta / c.avg * 100;
+  if (pct > 4) return box('good', `À FC égale tu cours de plus en plus vite (~${pct.toFixed(0)} % d'efficacité gagnée sur la période) : les bulles glissent vers le bas-droite, signe d'un moteur aérobie qui progresse.`);
+  if (pct < -4) return box('warn', `Ton efficacité allure/FC recule (~${pct.toFixed(0)} %) : pour une même vitesse ton cœur monte plus. Souvent fatigue, chaleur ou footings trop rapides — ralentis les EF.`);
+  return box('info', `Relation allure/FC stable. Pour faire descendre les bulles (FC plus basse à allure égale) : du volume facile en Z2, vraiment lent.`);
+}
+
+// VO₂max vs charge de fond (CTL) : l'entraînement se traduit-il en gains mesurés ?
+export function analyzeVo2Ctl(corr) {
+  if (corr == null) return null;
+  if (corr > 0.4) return box('good', `VO₂max et charge de fond évoluent ensemble (corrélation ${corr}) : ton entraînement se transforme bien en cylindrée mesurée. Continue à construire le CTL sans à-coups.`);
+  if (corr < -0.3) return box('warn', `VO₂max et charge varient en sens inverse (corrélation ${corr}) : la fatigue accumulée masque peut-être les gains. Vérifie récupération et sommeil.`);
+  return box('info', `Lien faible entre VO₂max et volume (corrélation ${corr}) : tes gains de VO₂max viennent surtout de l'intensité (VMA, seuil) plutôt que du seul kilométrage.`);
+}
+
+// Cumul annuel : avance/retard sur l'an dernier à date égale.
+export function analyzeCumulative(cum) {
+  const years = Object.keys(cum);
+  if (years.length < 2) return null;
+  const yLast = years.at(-1), yPrev = years.at(-2);
+  const cl = cum[yLast], cp = cum[yPrev];
+  if (!cl.length || !cp.length) return null;
+  const lastDoy = cl.at(-1).doy, kmL = cl.at(-1).km;
+  let kmP = 0;
+  for (const p of cp) { if (p.doy <= lastDoy) kmP = p.km; else break; }
+  const diff = +(kmL - kmP).toFixed(0);
+  if (diff >= 10) return box('good', `À date égale tu es ${diff} km devant ${yPrev} (${kmL} km en ${yLast} contre ${kmP}). Belle progression de volume sur l'année.`);
+  if (diff <= -10) return box('info', `À date égale tu as ${-diff} km de retard sur ${yPrev} (${kmL} km contre ${kmP}). Pas grave si c'est volontaire (blessure, affûtage) ; sinon, remonte le volume de ~10 %/sem.`);
+  return box('info', `Volume annuel dans la lignée de ${yPrev} (${kmL} km contre ${kmP} à date égale). La régularité d'une année sur l'autre est un très bon signe.`);
+}

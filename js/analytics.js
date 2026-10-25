@@ -543,3 +543,119 @@ export function metricSeries(metrics, name, sinceDays = 180) {
     .filter(m => m.name === name && m.date >= cutoff)
     .sort((a, b) => a.date.localeCompare(b.date));
 }
+
+// ---------- Corrélation de Pearson entre une série {date,qty} et une série {date->valeur} ----------
+// Sur les dates communes uniquement. Retourne null si < 5 points.
+
+export function correlateByDate(serie, byDate) {
+  const xs = [], ys = [];
+  for (const p of serie) {
+    const v = byDate.get(p.date);
+    if (v != null) { xs.push(p.qty); ys.push(v); }
+  }
+  if (xs.length < 5) return null;
+  const mx = mean(xs), my = mean(ys);
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < xs.length; i++) { const a = xs[i] - mx, b = ys[i] - my; num += a * b; dx += a * a; dy += b * b; }
+  return (dx && dy) ? +(num / Math.sqrt(dx * dy)).toFixed(2) : null;
+}
+
+// ---------- Allure vs FC (nuage de bulles, taille = distance) ----------
+// Chaque course avec FC moyenne = un point. Idée reprise du dépôt STats.
+
+export function paceHrPoints(acts, sinceDays = 365) {
+  return runsOnly(acts)
+    .filter(a => a.avgHr && new Date(a.date) > addDays(new Date(), -sinceDays))
+    .map(a => ({ pace: paceOf(a.distance, a.movingTime), hr: a.avgHr, km: a.distance / 1000, date: isoDay(a.date), name: a.name }))
+    .filter(p => p.pace && p.pace > 150 && p.pace < 720)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// ---------- Cumul kilométrique par année, aligné sur le jour de l'année ----------
+// { '2024': [{doy, km}], '2025': [...] } : km cumulés à chaque sortie. Idée STats.
+
+export function cumulativeByYear(acts, maxYears = 4) {
+  const runs = runsOnly(acts).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const byYear = new Map();
+  for (const a of runs) {
+    const d = new Date(a.date);
+    const y = d.getFullYear();
+    const doy = Math.ceil((d - new Date(y, 0, 0)) / 86400000);
+    if (!byYear.has(y)) byYear.set(y, []);
+    const arr = byYear.get(y);
+    const prev = arr.length ? arr[arr.length - 1].km : 0;
+    arr.push({ doy, km: +(prev + a.distance / 1000).toFixed(1) });
+  }
+  const years = [...byYear.keys()].sort((a, b) => a - b).slice(-maxYears);
+  const out = {};
+  for (const y of years) out[String(y)] = byYear.get(y);
+  return out;
+}
+
+// ---------- Histogramme de répartition des distances ----------
+
+export function distanceHistogram(acts) {
+  const buckets = [
+    { max: 3, label: '0–3' }, { max: 5, label: '3–5' }, { max: 8, label: '5–8' },
+    { max: 11, label: '8–11' }, { max: 15, label: '11–15' }, { max: 21, label: '15–21' },
+    { max: 1e9, label: '21+' },
+  ];
+  const values = buckets.map(() => 0);
+  for (const a of runsOnly(acts)) {
+    const km = a.distance / 1000;
+    const i = buckets.findIndex(b => km < b.max);
+    if (i >= 0) values[i]++;
+  }
+  return { labels: buckets.map(b => b.label), values };
+}
+
+// ---------- Courses par jour de la semaine (index 0 = lundi … 6 = dimanche) ----------
+
+export function dayOfWeekCounts(acts) {
+  const counts = [0, 0, 0, 0, 0, 0, 0];
+  for (const a of runsOnly(acts)) counts[(new Date(a.date).getDay() + 6) % 7]++;
+  return counts;
+}
+
+// ---------- Heatmap des habitudes : jour × heure de départ ----------
+// Retourne { grid: Map('jour-heure'->nb), max } sur l'heure locale du départ. Idée STats.
+
+export function dayHourHeat(acts) {
+  const grid = new Map();
+  let max = 0;
+  for (const a of runsOnly(acts)) {
+    const dt = new Date(a.date);
+    const k = `${(dt.getDay() + 6) % 7}-${dt.getHours()}`;
+    const v = (grid.get(k) || 0) + 1;
+    grid.set(k, v);
+    if (v > max) max = v;
+  }
+  return { grid, max };
+}
+
+// ---------- Calendrier des 12 derniers mois (style « GitHub contributions ») ----------
+// Retourne { cells:[{k, km, lvl}], cols, monthLabels:{col->'janv.'}, activeDays }. Idée STats.
+
+export function calendarDays(acts, weeks = 53) {
+  const byDay = new Map();
+  for (const a of runsOnly(acts)) {
+    const d = isoDay(a.date);
+    byDay.set(d, (byDay.get(d) || 0) + a.distance / 1000);
+  }
+  const end = new Date();
+  end.setDate(end.getDate() + (6 - (end.getDay() + 6) % 7)); // fin de la semaine courante (dimanche)
+  const start = addDays(end, -7 * weeks + 1);
+  const cells = [];
+  const monthLabels = {};
+  let col = 0, lastMonth = -1;
+  for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+    const km = byDay.get(isoDay(d)) || 0;
+    const lvl = km === 0 ? 0 : km < 4 ? 1 : km < 7 ? 2 : km < 11 ? 3 : 4;
+    cells.push({ k: isoDay(d), km, lvl });
+    if ((d.getDay() + 6) % 7 === 0) { // lundi : nouvelle colonne
+      if (d.getMonth() !== lastMonth) { monthLabels[col] = d.toLocaleDateString('fr-FR', { month: 'short' }); lastMonth = d.getMonth(); }
+      col++;
+    }
+  }
+  return { cells, cols: Math.ceil(cells.length / 7), monthLabels, activeDays: cells.filter(c => c.km > 0).length };
+}

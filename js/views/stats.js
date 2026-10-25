@@ -8,6 +8,8 @@ import {
   aerobicEfficiency, paceHistory, totals, metricSeries, runsOnly,
   fitnessSeries, monotony, driftSeries, monthlyVdot, compare30d, monthlyRecap,
   readinessToday, gearStats, tops, insights,
+  paceHrPoints, cumulativeByYear, distanceHistogram, dayOfWeekCounts, dayHourHeat,
+  calendarDays, correlateByDate,
 } from '../analytics.js';
 import { makeChart, PALETTE, paceAxis, paceTooltip, weekLabel, scatterInteraction } from '../charts.js';
 import * as A from '../analysis-text.js';
@@ -215,6 +217,34 @@ function renderPerf(root, ctx) {
     },
   });
 
+  // Allure vs FC (bulles, taille = distance) — idée STats
+  const ph = paceHrPoints(activities, 365);
+  if (ph.length > 4) {
+    const cPH = chartCard(root, 'st-pacehr', '🫀 Allure vs fréquence cardiaque',
+      'Chaque bulle = une sortie (taille = distance). Vers la droite = plus rapide, vers le bas = FC plus basse. Au fil des mois, des bulles qui glissent vers le bas-droite = tu cours plus vite pour une FC donnée.', true, A.analyzePaceHr(ph));
+    makeChart(cPH, {
+      type: 'bubble',
+      data: {
+        datasets: [{
+          label: 'sortie',
+          data: ph.map(p => ({ x: -p.pace, y: p.hr, r: Math.max(3, Math.sqrt(p.km) * 2.2), meta: p })),
+          backgroundColor: PALETTE.purple + '66', borderColor: PALETTE.purple, borderWidth: 1,
+        }],
+      },
+      options: {
+        interaction: scatterInteraction,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => ` ${fmtDate(c.raw.meta.date)} · ${c.raw.meta.km.toFixed(1)} km · ${fmtPace(c.raw.meta.pace)} · ${Math.round(c.raw.meta.hr)} bpm` } },
+        },
+        scales: {
+          x: { type: 'linear', ticks: { callback: v => fmtPace(-v, '') }, title: { display: true, text: 'allure (→ plus rapide)' } },
+          y: { title: { display: true, text: 'FC moyenne (bpm)' } },
+        },
+      },
+    });
+  }
+
   // VO2max
   const vo2 = metricSeries(metrics, 'vo2_max', 540);
   if (vo2.length > 2) {
@@ -226,6 +256,43 @@ function renderPerf(root, ctx) {
         datasets: [{ label: 'VO₂max', data: vo2.map(m => m.qty), borderColor: PALETTE.purple, backgroundColor: 'rgba(114,9,183,.1)', fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2.5 }],
       },
       options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 7 } } } },
+    });
+  }
+
+  // VO₂max × charge de fond (CTL) — l'entraînement se traduit-il en gains ? (idée STats)
+  if (vo2.length > 3) {
+    const fitV = fitnessSeries(activities, 540, ctx.settings.fcMax || 195, ctx.settings.fcRepos || 55);
+    const ctlByDate = new Map(fitV.map(f => [f.date, f.ctl]));
+    const vo2Days = vo2.map(m => ({ date: m.date, qty: m.qty }));
+    const corr = correlateByDate(vo2Days, ctlByDate);
+    const cVC = chartCard(root, 'st-vo2ctl', '🔗 VO₂max × charge de fond (CTL)',
+      'VO₂max mesurée (gauche) superposée à ta forme chronique CTL (droite, charge lissée 42 j). Si les deux montent ensemble, ton volume se transforme en cylindrée.', false, A.analyzeVo2Ctl(corr));
+    makeChart(cVC, {
+      type: 'line',
+      data: {
+        labels: fitV.map(f => f.date),
+        datasets: [
+          {
+            label: 'VO₂max', yAxisID: 'y',
+            data: vo2.map(m => ({ x: m.date, y: m.qty })),
+            borderColor: PALETTE.purple, backgroundColor: 'transparent', fill: false,
+            pointRadius: 2, borderWidth: 2.5, tension: 0.3, spanGaps: true,
+          },
+          {
+            label: 'Forme / CTL', yAxisID: 'y2',
+            data: fitV.map(f => ({ x: f.date, y: f.ctl })),
+            borderColor: PALETTE.blue, pointRadius: 0, borderWidth: 2, tension: 0.3,
+          },
+        ],
+      },
+      options: {
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        scales: {
+          x: { type: 'category', ticks: { maxTicksLimit: 7, callback(v) { const l = this.getLabelForValue(v); return l ? fmtDate(l, { month: 'short', year: '2-digit' }) : ''; } } },
+          y: { position: 'left', title: { display: true, text: 'VO₂max' } },
+          y2: { position: 'right', grid: { display: false }, title: { display: true, text: 'CTL' } },
+        },
+      },
     });
   }
 
@@ -380,6 +447,32 @@ function renderLoad(root, ctx) {
     },
   });
 
+  // Jauge ACWR du jour (demi-cercle) — idée STats
+  const lastAcwr = [...acwr].reverse().find(a => a.ratio != null);
+  if (lastAcwr) {
+    const cur = Math.min(2, lastAcwr.ratio);
+    const col = cur > 1.5 ? PALETTE.pink : (cur > 1.3 || cur < 0.8) ? PALETTE.yellow : PALETTE.green;
+    const wrap = el('div', { class: 'gauge-wrap' },
+      el('canvas', { id: 'st-acwrgauge' }),
+      el('div', { class: 'gauge-reading' },
+        el('div', { class: 'gauge-reading-val', style: `color:${col}` }, lastAcwr.ratio.toFixed(2)),
+        el('div', { class: 'gauge-reading-lbl' }, 'charge 7 j / 28 j')));
+    root.append(el('div', { class: 'card' },
+      el('div', { class: 'card-title' }, '🎯 Jauge ACWR du jour'),
+      el('div', { class: 'muted small', style: 'margin-bottom:6px' }, 'Vert 0,8–1,3 = progression sûre · jaune = prudence · rouge > 1,5 = risque de blessure.'),
+      wrap));
+    makeChart(document.getElementById('st-acwrgauge'), {
+      type: 'doughnut',
+      data: {
+        datasets: [
+          { data: [0.8, 0.5, 0.2, 0.5], backgroundColor: ['rgba(141,153,174,.3)', 'rgba(14,173,105,.75)', 'rgba(255,210,63,.85)', 'rgba(238,66,102,.85)'], borderWidth: 0, circumference: 180, rotation: 270, cutout: '68%' },
+          { data: [cur, 2 - cur], backgroundColor: [col, 'rgba(31,41,55,.05)'], borderWidth: 0, circumference: 180, rotation: 270, cutout: '85%' },
+        ],
+      },
+      options: { plugins: { legend: { display: false }, tooltip: { enabled: false } } },
+    });
+  }
+
   // Monotonie de la semaine (Foster)
   const mono = monotony(activities, s.fcMax || 195, s.fcRepos || 55);
   if (mono.monotony != null) {
@@ -434,6 +527,109 @@ function renderLoad(root, ctx) {
         scales: { x: { title: { display: true, text: 'heures' } } },
       },
     });
+  }
+
+  // Cumul kilométrique par année (aligné jour de l'année) — idée STats
+  const cum = cumulativeByYear(activities, 4);
+  const cumYears = Object.keys(cum);
+  if (cumYears.length && cum[cumYears.at(-1)].length > 2) {
+    const yearCols = [PALETTE.gray, PALETTE.teal, PALETTE.blue, PALETTE.primary];
+    const cC = chartCard(root, 'st-cum', '📈 Cumul annuel (à date égale)',
+      'Kilomètres cumulés depuis le 1ᵉʳ janvier, une courbe par année. Compare ton avance/retard sur l’an dernier au même jour.', true, A.analyzeCumulative(cum));
+    makeChart(cC, {
+      type: 'line',
+      data: {
+        datasets: cumYears.map((y, i) => ({
+          label: y,
+          data: cum[y].map(p => ({ x: p.doy, y: p.km })),
+          borderColor: yearCols[(yearCols.length - cumYears.length + i + yearCols.length) % yearCols.length],
+          backgroundColor: 'transparent', pointRadius: 0, borderWidth: y === cumYears.at(-1) ? 3 : 2, tension: 0.2,
+        })),
+      },
+      options: {
+        scales: {
+          x: { type: 'linear', min: 1, max: 366, title: { display: true, text: 'mois' }, ticks: { stepSize: 30.5, callback: v => ['', 'janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'][Math.round(v / 30.5)] || '' } },
+          y: { title: { display: true, text: 'km cumulés' } },
+        },
+        plugins: { tooltip: { callbacks: { label: c => ` ${c.dataset.label} : ${Math.round(c.parsed.y)} km (jour ${c.parsed.x})` } } },
+      },
+    });
+  }
+
+  // Répartition des distances — idée STats
+  const hist = distanceHistogram(activities);
+  if (hist.values.some(v => v > 0)) {
+    const cH = chartCard(root, 'st-hist', '📏 Répartition des distances', 'Nombre de sorties par tranche de distance (km).');
+    makeChart(cH, {
+      type: 'bar',
+      data: { labels: hist.labels.map(l => l + ' km'), datasets: [{ data: hist.values, backgroundColor: PALETTE.blue, borderRadius: 6 }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'nb de sorties' } } } },
+    });
+  }
+
+  // Courses par jour de la semaine — idée STats
+  const dow = dayOfWeekCounts(activities);
+  if (dow.some(v => v > 0)) {
+    const maxDow = Math.max(...dow);
+    const cD = chartCard(root, 'st-dow', '🗓️ Courses par jour de la semaine', 'Tes habitudes : quels jours tu cours le plus souvent.');
+    makeChart(cD, {
+      type: 'bar',
+      data: {
+        labels: ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'],
+        datasets: [{ data: dow, backgroundColor: dow.map(v => v === maxDow ? PALETTE.primary : PALETTE.primary + '77'), borderRadius: 6 }],
+      },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'nb de sorties' } } } },
+    });
+  }
+
+  // Calendrier des 12 derniers mois (style GitHub) — idée STats
+  const cal = calendarDays(activities, 53);
+  if (cal.activeDays > 0) {
+    const card = el('div', { class: 'card' },
+      el('div', { class: 'card-title' }, '🟩 Calendrier des 12 derniers mois'),
+      el('div', { class: 'muted small', style: 'margin-bottom:8px' }, `${cal.activeDays} jours de course. Intensité : clair → foncé = <4, 4–7, 7–11, 11+ km.`));
+    const scroll = el('div', { class: 'cal-scroll' });
+    const months = el('div', { class: 'cal-months', style: `grid-template-columns:repeat(${cal.cols},1fr)` });
+    for (let c = 0; c < cal.cols; c++) months.append(el('div', {}, cal.monthLabels[c] || ''));
+    const grid = el('div', { class: 'cal-grid', style: `grid-template-columns:repeat(${cal.cols},1fr)` });
+    cal.cells.forEach((cell, i) => {
+      grid.append(el('div', {
+        class: `cal-cell l${cell.lvl}`,
+        style: `grid-row:${i % 7 + 1};grid-column:${Math.floor(i / 7) + 1}`,
+        title: `${cell.k} : ${cell.km ? cell.km.toFixed(1) + ' km' : 'repos'}`,
+      }));
+    });
+    scroll.append(el('div', { class: 'cal-inner' }, months, grid));
+    card.append(scroll);
+    root.append(card);
+  }
+
+  // Heatmap des habitudes : jour × heure de départ — idée STats
+  const heat = dayHourHeat(activities);
+  if (heat.max > 0) {
+    const hours = Array.from({ length: 18 }, (_, i) => i + 5); // 5h → 22h
+    const card = el('div', { class: 'card' },
+      el('div', { class: 'card-title' }, '🔥 Heatmap des départs'),
+      el('div', { class: 'muted small', style: 'margin-bottom:8px' }, 'À quelle heure et quel jour tu démarres tes sorties (heure locale).'));
+    const scroll = el('div', { class: 'heat-scroll' });
+    const gridEl = el('div', { class: 'dowheat', style: `grid-template-columns:auto repeat(${hours.length},1fr)` });
+    gridEl.append(el('div', {}));
+    hours.forEach(h => gridEl.append(el('div', { class: 'dowheat-hlbl' }, String(h))));
+    ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].forEach((lbl, d) => {
+      gridEl.append(el('div', { class: 'dowheat-lbl' }, lbl));
+      for (const h of hours) {
+        const v = heat.grid.get(`${d}-${h}`) || 0;
+        const op = v ? (0.25 + 0.75 * v / heat.max) : 0;
+        gridEl.append(el('div', {
+          class: 'dowheat-cell',
+          style: v ? `background:rgba(255,107,53,${op.toFixed(2)})` : '',
+          title: `${lbl} ${h}h : ${v} sortie${v > 1 ? 's' : ''}`,
+        }));
+      }
+    });
+    scroll.append(gridEl);
+    card.append(scroll);
+    root.append(card);
   }
 }
 
@@ -567,6 +763,35 @@ function renderTech(root, ctx) {
         ],
       },
       options: { scales: { x: { ticks: { maxTicksLimit: 7 } } } },
+    });
+  }
+
+  // Signature biomécanique : contact sol × oscillation verticale (double axe) — idée STats
+  const gctS = metricSeries(metrics, 'running_ground_contact_time', 365);
+  const voscS = metricSeries(metrics, 'running_vertical_oscillation', 365);
+  if (gctS.length > 3 && voscS.length > 3) {
+    any = true;
+    const labels = [...new Set([...gctS, ...voscS].map(m => m.date))].sort();
+    const cB = chartCard(root, 'st-bsi', '🦿 Signature biomécanique (contact sol × oscillation)',
+      'Temps de contact au sol (gauche) et oscillation verticale (droite) superposés. Les deux qui baissent ensemble = foulée plus réactive et économique, moins de charge sur les tibias.', false,
+      A.box('info', 'Moins de temps au sol et moins de rebond vertical = foulée plus économique et plus douce pour les articulations.'));
+    makeChart(cB, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Contact sol (ms)', yAxisID: 'y', data: gctS.map(m => ({ x: m.date, y: +m.qty.toFixed(0) })), borderColor: PALETTE.pink, backgroundColor: 'rgba(238,66,102,.1)', fill: true, pointRadius: 0, borderWidth: 2.5, tension: 0.3, spanGaps: true },
+          { label: 'Oscillation (cm)', yAxisID: 'y2', data: voscS.map(m => ({ x: m.date, y: +m.qty.toFixed(1) })), borderColor: PALETTE.teal, pointRadius: 0, borderWidth: 2, tension: 0.3, spanGaps: true },
+        ],
+      },
+      options: {
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        scales: {
+          x: { type: 'category', ticks: { maxTicksLimit: 7, callback(v) { const l = this.getLabelForValue(v); return l ? fmtDate(l, { month: 'short' }) : ''; } } },
+          y: { position: 'left', title: { display: true, text: 'ms' } },
+          y2: { position: 'right', grid: { display: false }, title: { display: true, text: 'cm' } },
+        },
+      },
     });
   }
 
