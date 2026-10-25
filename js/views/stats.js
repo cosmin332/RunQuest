@@ -2,7 +2,8 @@
 // RunQuest — Vue Stats : Performance · Charge · Santé · Technique · Records
 // ============================================================
 
-import { el, fmtKm, fmtPace, fmtDuration, fmtDate, paceOf, rollingMean, mean, fmtDurationLong } from '../utils.js';
+import { el, fmtKm, fmtPace, fmtDuration, fmtDate, paceOf, rollingMean, mean, fmtDurationLong, toast } from '../utils.js';
+import { buildReport } from '../report.js';
 import {
   weeklyVolume, acwrSeries, records, predict10k, riegel, vdot, zoneDistribution,
   aerobicEfficiency, paceHistory, totals, metricSeries, runsOnly,
@@ -26,6 +27,8 @@ const TABS = [
 
 export function renderStats(root, ctx) {
   const tab = ctx.params?.tab || 'perf';
+  root.append(el('div', { class: 'report-bar' },
+    el('button', { class: 'btn btn-report', onclick: () => openReportModal(ctx) }, '🤖 Résumé pour analyse IA')));
   root.append(el('div', { class: 'subtabs' },
     ...TABS.map(t => el('button', {
       class: `chip ${tab === t.id ? 'chip-on' : ''}`,
@@ -40,6 +43,41 @@ export function renderStats(root, ctx) {
   }
 
   ({ perf: renderPerf, load: renderLoad, health: renderHealth, tech: renderTech, records: renderRecords }[tab] || renderPerf)(root, ctx);
+}
+
+// Résumé statistique à coller dans Claude (interprétation seule, pas de conseil).
+function openReportModal(ctx) {
+  const overlay = el('div', { class: 'modal-overlay', onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  const modal = el('div', { class: 'modal modal-wide' });
+  overlay.append(modal);
+  const close = () => overlay.remove();
+  const ta = el('textarea', { class: 'report-text', readonly: 'readonly', spellcheck: 'false' });
+  ta.value = buildReport(ctx);
+
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(ta.value);
+      else { ta.focus(); ta.select(); document.execCommand('copy'); }
+      toast('Résumé copié — colle-le dans Claude', 'success');
+    } catch (e) { ta.focus(); ta.select(); toast('Sélectionne puis copie le texte', 'info', 4000); }
+  };
+
+  const actions = el('div', { class: 'modal-actions' },
+    el('button', { class: 'btn btn-primary', onclick: copy }, '📋 Copier'));
+  if (navigator.share) actions.append(el('button', { class: 'btn', onclick: async () => { try { await navigator.share({ text: ta.value }); } catch (e) {} } }, '📤 Partager'));
+  actions.append(el('button', { class: 'btn', onclick: close }, 'Fermer'));
+
+  modal.append(
+    el('div', { class: 'modal-head' },
+      el('h3', {}, '🤖 Résumé pour analyse IA'),
+      el('button', { class: 'btn-close', onclick: close }, '×')),
+    el('div', { class: 'muted small', style: 'margin-bottom:8px' },
+      'Copie ce texte et colle-le dans Claude. La consigne incluse demande une interprétation des chiffres — sans conseil, plan ni séance.'),
+    ta,
+    actions,
+  );
+  document.body.append(overlay);
+  ta.scrollTop = 0;
 }
 
 // ---------- MUSCU ----------

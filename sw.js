@@ -1,5 +1,5 @@
 // RunQuest — service worker : cache-first pour le shell, réseau pour le reste.
-const CACHE = 'runquest-v17';
+const CACHE = 'runquest-v18';
 const ASSETS = [
   './',
   './index.html',
@@ -19,6 +19,7 @@ const ASSETS = [
   './js/strength.js',
   './js/strava.js',
   './js/garmin.js',
+  './js/report.js',
   './js/charts.js',
   './js/views/dashboard.js',
   './js/views/program.js',
