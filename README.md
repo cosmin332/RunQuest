@@ -32,6 +32,7 @@ projections Riegel), gamification complète (XP, niveaux, badges, streaks).
 | Archive Strava | `activities.csv` de l'export d'archive | résumé de toutes les activités |
 | GPX | fichiers `.gpx` (multi-sélection) | trace + FC |
 | API Strava | OAuth (Client ID/Secret dans Réglages) | sync incrémentale des nouvelles activités |
+| API Garmin | proxy Cloudflare perso (adresse + code secret dans Réglages) | activités + VO₂max, HRV, FC repos, sommeil, dynamique de course (contact sol, oscillation, foulée, puissance) |
 | Ancienne app | sauvegarde runtrack `.json` | programme précédent + historique |
 
 Les activités des différentes sources sont **automatiquement dédupliquées et fusionnées** :
@@ -47,6 +48,23 @@ sont automatiquement re-liées à l'activité conservée.
 1. Crée une app sur <https://www.strava.com/settings/api>.
 2. *Authorization Callback Domain* = ton domaine GitHub Pages (ex. `ton-pseudo.github.io`).
 3. Colle Client ID + Client Secret dans Réglages → *Connecter mon compte Strava*.
+
+### Sync Garmin (proxy Cloudflare perso)
+
+Ta clé Garmin Personal API reste **dans le proxy, jamais dans l'app** : seul un
+« code secret » que tu choisis transite. Le navigateur appelle le proxy, qui
+ajoute le token Garmin et les en-têtes CORS.
+
+1. Déploie le Worker Cloudflare (code + guide dans le dépôt
+   `cosminpatrau0-stack/Test-garmin-MCP`, dossier `cloudflare`) avec deux variables
+   secrètes : `GARMIN_API_KEY` (ta clé Garmin) et `PROXY_SECRET` (un mot de passe
+   que tu inventes).
+2. Dans Réglages → *Synchronisation Garmin* : colle l'**adresse du proxy**
+   (`https://<ton-worker>.workers.dev/`) et le **code secret** (= `PROXY_SECRET`),
+   choisis l'historique, puis *Synchroniser maintenant*.
+
+Les activités et métriques Garmin sont fusionnées/dédupliquées avec les autres
+sources comme le reste.
 
 ## Format d'import de programme
 

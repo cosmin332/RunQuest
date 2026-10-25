@@ -7,6 +7,7 @@ import { getState, setState, saveMetrics, exportBackup, restoreBackup, wipeAll }
 import { parseStravaArchiveCsv, parseGpx, parseHealthExport, parseRuntrackBackup } from '../parsers.js';
 import { ingestActivities, dedupeStored } from '../data-import.js';
 import * as strava from '../strava.js';
+import * as garmin from '../garmin.js';
 
 function ingestReport(r) {
   return `${r.added} ajoutée${r.added > 1 ? 's' : ''}, ${r.merged} fusionnée${r.merged > 1 ? 's' : ''}`
@@ -131,6 +132,47 @@ export function renderSettings(root, ctx) {
   }
   root.append(stravaCard);
 
+  // ---------- Garmin (proxy Cloudflare perso) ----------
+  const gcfg = garmin.getConfig();
+  const garminCard = el('div', { class: 'card' },
+    el('div', { class: 'card-title' }, '⌚ Synchronisation Garmin (proxy perso)'),
+    el('p', { class: 'small muted' },
+      'Via ton proxy Cloudflare personnel : ta clé Garmin reste dans le proxy, jamais dans l’app — seul le « code secret » transite. Guide de création du proxy : dépôt cosminpatrau0-stack/Test-garmin-MCP (dossier cloudflare).'),
+    labeledInput('Adresse du proxy', gcfg.base, v => saveSetting('garminProxy', v.trim()), 'url'),
+    labeledInput('Code secret', gcfg.secret, v => saveSetting('garminSecret', v.trim()), 'password'),
+    labeledSelect('Historique à récupérer', [[180, '~6 mois'], [365, '~1 an'], [730, '~2 ans']], gcfg.days, v => saveSetting('garminDays', parseInt(v) || 365)),
+  );
+  const gLast = garmin.lastSync();
+  if (gLast) garminCard.append(el('div', { class: 'strava-status ok' }, `✅ Dernière sync Garmin : ${fmtDate(gLast)}`));
+  garminCard.append(el('div', { class: 'modal-actions' },
+    el('button', {
+      class: 'btn btn-primary',
+      onclick: async e => {
+        const btn = e.target;
+        if (!garmin.isConfigured()) { toast('Renseigne l’adresse du proxy et le code secret', 'error'); return; }
+        btn.disabled = true;
+        try {
+          const data = await garmin.fetchGarmin(garmin.getConfig(), msg => { btn.textContent = msg; });
+          const { activities, metrics } = garmin.mapToRunQuest(data);
+          if (!activities.length && !metrics.length) {
+            toast('Le proxy n’a renvoyé aucune donnée sur la période. Vérifie l’adresse et le code secret.', 'info', 6000);
+          } else {
+            const r = await ingestActivities(activities);
+            if (metrics.length) await saveMetrics(metrics);
+            setState('importLog', { ...getState('importLog', {}), garmin: new Date().toISOString() });
+            toast(`Garmin : ${ingestReport(r)} · ${metrics.length} points santé/technique`, 'success', 5000);
+          }
+          ctx.refresh();
+        } catch (err) {
+          toast('Garmin : ' + err.message, 'error', 6000);
+        } finally {
+          btn.disabled = false; btn.textContent = '🔄 Synchroniser maintenant';
+        }
+      },
+    }, '🔄 Synchroniser maintenant'),
+  ));
+  root.append(garminCard);
+
   // ---------- Profil ----------
   root.append(el('div', { class: 'card' },
     el('div', { class: 'card-title' }, '👤 Profil coureur'),
@@ -201,6 +243,13 @@ function labeledInput(label, value, onChange, type = 'text') {
     el('span', {}, label),
     el('input', { class: 'input', type, value, onchange: e => onChange(e.target.value) }),
   );
+}
+
+function labeledSelect(label, options, value, onChange) {
+  const select = el('select', { class: 'input', onchange: e => onChange(e.target.value) },
+    ...options.map(([v, lbl]) => el('option', { value: String(v) }, lbl)));
+  select.value = String(value);
+  return el('label', { class: 'field' }, el('span', {}, label), select);
 }
 
 function importRow(icon, title, desc, lastInfo, onClick) {
