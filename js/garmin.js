@@ -43,6 +43,16 @@ const rnd = (v, nd) => v == null ? null : (nd != null ? Math.round(v * 10 ** nd)
 function normType(t) { t = (t || '').toLowerCase(); if (t.includes('run')) return 'running'; if (t.includes('walk')) return 'walking'; if (t.includes('hik')) return 'hiking'; if (t.includes('cycl') || t.includes('bik')) return 'cycling'; if (t.includes('swim')) return 'swimming'; if (t.includes('strength')) return 'strength_training'; return t || 'other'; }
 const strideM = v => v == null ? null : (v > 3 ? Math.round(v) / 100 : Math.round(v * 100) / 100);
 
+// Cherche en profondeur (jusqu'à `depth` niveaux) la 1re valeur numérique dont
+// la clé figure dans `names`. Robuste aux objets imbriqués de l'API Personal
+// (ex. FC repos sous `heartRate.restingHeartRate`).
+function deepNum(obj, names, depth = 2) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const k of Object.keys(obj)) if (names.includes(k) && typeof obj[k] === 'number') return obj[k];
+  if (depth > 0) for (const k of Object.keys(obj)) { const v = obj[k]; if (v && typeof v === 'object' && !Array.isArray(v)) { const r = deepNum(v, names, depth - 1); if (r != null) return r; } }
+  return null;
+}
+
 function convertActivity(a, detail) {
   let src = Object.assign({}, a);
   if (detail && typeof detail === 'object') {
@@ -153,7 +163,7 @@ export async function fetchGarmin(cfg, onProgress) {
     if (batch.length < 50 || offset > 2000) break;
   }
 
-  const activities = []; let detailed = 0, detailOk = 0, runVo2 = 0; const DETAIL = 60;
+  const activities = []; let detailed = 0, detailOk = 0, runVo2 = 0, dumpedDetail = false; const DETAIL = 60;
   for (let i = 0; i < rawActs.length; i++) {
     const a = rawActs[i];
     let tkey = ''; const at = a.activityType; if (at && typeof at === 'object') tkey = (at.typeKey || '').toLowerCase();
@@ -162,6 +172,7 @@ export async function fetchGarmin(cfg, onProgress) {
       detailed++;
       try { detail = await api('/activity-service/activity/' + pick(a, ['activityId', 'id'])); if (detail) detailOk++; } catch (e) {}
       prog('Détail des courses… (' + detailed + ')', 10 + Math.round(detailed / Math.max(1, rawActs.length) * 40));
+      if (detail && !dumpedDetail) { dumpedDetail = true; const s = detail.summaryDTO || detail; diag.push('• détail course champs : ' + Object.keys(s).slice(0, 26).join(',')); }
     }
     const conv = convertActivity(a, detail);
     if (conv.vo2max) runVo2++;
@@ -176,16 +187,31 @@ export async function fetchGarmin(cfg, onProgress) {
   const daily = {};
   const merge = (rows, fn) => asList(rows).forEach(r => { if (!r || typeof r !== 'object') return; let d = pick(r, ['calendarDate', 'calendar_date', 'date']); if (!d) return; d = String(d).slice(0, 10); const row = daily[d] || (daily[d] = { date: d }); fn(r, row); });
 
-  const dailyResp = await apiTry('Résumés quotidiens (FC repos)', '/usersummary-service/v2/dailysummaries', { startDate: ws, endDate: we });
-  if (dailyResp) merge(dailyResp, (r, row) => { row.resting_hr = pick(r, ['restingHeartRate']); row.steps = pick(r, ['totalSteps', 'steps']); });
-  const stressResp = await apiTry('Stress', '/usersummary-service/stats/stress/daily/' + ws + '/' + we);
-  if (stressResp) merge(stressResp, (r, row) => { row.stress_avg = pick(r, ['averageStressLevel', 'overallStressLevel', 'value']); });
-  const sleepResp = await apiTry('Sommeil', '/sleep-service/sleep/dailySleepSummariesByDate', { startDate: ws, endDate: we });
-  if (sleepResp) merge(sleepResp, (r, row) => {
-    const deep = pick(r, ['deepSleepSeconds'], 0) || 0, light = pick(r, ['lightSleepSeconds'], 0) || 0, rem = pick(r, ['remSleepSeconds'], 0) || 0;
-    row.sleep_s = (deep + light + rem) || pick(r, ['sleepTimeSeconds']); row.deep_s = deep || null; row.light_s = light || null; row.rem_s = rem || null; row.awake_s = pick(r, ['awakeSleepSeconds']);
-    const sc = pick(r, ['sleepScores']); row.sleep_score = (sc && typeof sc === 'object') ? pick(sc, ['overallScore']) : pick(r, ['sleepScore', 'overallSleepScore']);
-  });
+  // Résumés quotidiens : FC repos / stress / pas sont imbriqués (heartRate, stress…) → lecture en profondeur.
+  const dailyResp = await apiTry('Résumés quotidiens', '/usersummary-service/v2/dailysummaries', { startDate: ws, endDate: we });
+  if (dailyResp) {
+    const arr = asList(dailyResp);
+    if (arr[0]) diag.push('• 1er résumé : ' + JSON.stringify(arr[0]).slice(0, 420));
+    merge(dailyResp, (r, row) => {
+      row.resting_hr = deepNum(r, ['restingHeartRate', 'restingHr', 'resting']);
+      row.steps = deepNum(r, ['totalSteps', 'steps']);
+      row.stress_avg = deepNum(r, ['avgStressLevel', 'averageStressLevel', 'overallStressLevel']);
+    });
+  }
+  // Sommeil : les chemins Connect renvoient 400 sur l'API Personal — on réduit la
+  // fenêtre (28 j) et on teste une variante. Les dumps révèlent la bonne forme.
+  const sws = isoD(daysAgo(Math.min(wdays, 28)));
+  let sleepResp = await apiTry('Sommeil (28j)', '/sleep-service/sleep/dailySleepSummariesByDate', { startDate: sws, endDate: we });
+  if (!sleepResp) sleepResp = await apiTry('Sommeil (wellness)', '/wellness-service/wellness/dailySleepsByDate', { startDate: sws, endDate: we });
+  if (sleepResp) {
+    const arr = asList(sleepResp);
+    if (arr[0]) diag.push('• 1re nuit : ' + JSON.stringify(arr[0]).slice(0, 320));
+    merge(sleepResp, (r, row) => {
+      const deep = deepNum(r, ['deepSleepSeconds']) || 0, light = deepNum(r, ['lightSleepSeconds']) || 0, rem = deepNum(r, ['remSleepSeconds']) || 0;
+      row.sleep_s = (deep + light + rem) || deepNum(r, ['sleepTimeSeconds']); row.deep_s = deep || null; row.light_s = light || null; row.rem_s = rem || null; row.awake_s = deepNum(r, ['awakeSleepSeconds']);
+      row.sleep_score = deepNum(r, ['overallScore', 'sleepScore', 'overallSleepScore']);
+    });
+  }
   const hrvArr = [];
   const hrvResp = await apiTry('HRV', '/hrv-service/hrv/daily/' + ws + '/' + we);
   if (hrvResp) asList(hrvResp).forEach(r => { const d = pick(r, ['calendarDate', 'date']); const v = pick(r, ['weeklyAvg', 'lastNightAvg', 'hrvValue', 'avgHrv', 'value']); if (d && v) hrvArr.push({ date: String(d).slice(0, 10), value: Math.round(v) }); });
