@@ -1,5 +1,5 @@
 // RunQuest — service worker : cache-first pour le shell, réseau pour le reste.
-const CACHE = 'runquest-v16';
+const CACHE = 'runquest-v17';
 const ASSETS = [
   './',
   './index.html',

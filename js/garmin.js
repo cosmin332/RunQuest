@@ -163,7 +163,7 @@ export async function fetchGarmin(cfg, onProgress) {
     if (batch.length < 50 || offset > 2000) break;
   }
 
-  const activities = []; let detailed = 0, detailOk = 0, runVo2 = 0, dumpedDetail = false; const DETAIL = 60;
+  const activities = []; let detailed = 0, detailOk = 0, runVo2 = 0; const DETAIL = 60;
   for (let i = 0; i < rawActs.length; i++) {
     const a = rawActs[i];
     let tkey = ''; const at = a.activityType; if (at && typeof at === 'object') tkey = (at.typeKey || '').toLowerCase();
@@ -172,7 +172,6 @@ export async function fetchGarmin(cfg, onProgress) {
       detailed++;
       try { detail = await api('/activity-service/activity/' + pick(a, ['activityId', 'id'])); if (detail) detailOk++; } catch (e) {}
       prog('Détail des courses… (' + detailed + ')', 10 + Math.round(detailed / Math.max(1, rawActs.length) * 40));
-      if (detail && !dumpedDetail) { dumpedDetail = true; const s = detail.summaryDTO || detail; diag.push('• détail course champs : ' + Object.keys(s).slice(0, 26).join(',')); }
     }
     const conv = convertActivity(a, detail);
     if (conv.vo2max) runVo2++;
@@ -190,9 +189,6 @@ export async function fetchGarmin(cfg, onProgress) {
   // Résumés quotidiens : FC repos / stress sont imbriqués (ex. heartRate) → lecture en profondeur.
   const dailyResp = await apiTry('Résumés quotidiens', '/usersummary-service/v2/dailysummaries', { startDate: ws, endDate: we });
   if (dailyResp) {
-    const arr = asList(dailyResp);
-    const sampleHr = arr.map(r => r && r.heartRate).find(h => h && typeof h === 'object' && Object.keys(h).length);
-    if (sampleHr) diag.push('• heartRate : ' + JSON.stringify(sampleHr).slice(0, 240));
     const RHR = ['restingHeartRate', 'restingHr', 'resting', 'restingHeartRateInBeatsPerMinute', 'restBpm', 'restingBpm', 'rhr', 'restingHeartRateValue'];
     merge(dailyResp, (r, row) => {
       row.resting_hr = deepNum(r, RHR, 3);
@@ -213,7 +209,6 @@ export async function fetchGarmin(cfg, onProgress) {
       catch (e) { break; }
     }
   }
-  if (sleepRows[0]) diag.push('• 1re nuit : ' + JSON.stringify(sleepRows[0]).slice(0, 280));
   merge(sleepRows, (r, row) => {
     const deep = deepNum(r, ['deepSleepSeconds']) || 0, light = deepNum(r, ['lightSleepSeconds']) || 0, rem = deepNum(r, ['remSleepSeconds']) || 0;
     row.sleep_s = (deep + light + rem) || deepNum(r, ['sleepTimeSeconds']);
