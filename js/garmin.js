@@ -163,23 +163,29 @@ export async function fetchGarmin(cfg, onProgress) {
     if (batch.length < 50 || offset > 2000) break;
   }
 
-  const activities = []; let detailed = 0, detailOk = 0, runVo2 = 0; const DETAIL = 60;
+  const activities = []; let detailed = 0, detailOk = 0, runVo2 = 0, zonesOk = 0; const DETAIL = 60;
   for (let i = 0; i < rawActs.length; i++) {
     const a = rawActs[i];
     let tkey = ''; const at = a.activityType; if (at && typeof at === 'object') tkey = (at.typeKey || '').toLowerCase();
     let detail = null;
     if (tkey.includes('run') && detailed < DETAIL) {
       detailed++;
-      try { detail = await api('/activity-service/activity/' + pick(a, ['activityId', 'id'])); if (detail) detailOk++; } catch (e) {}
+      const id = pick(a, ['activityId', 'id']);
+      try { detail = await api('/activity-service/activity/' + id); if (detail) detailOk++; } catch (e) {}
+      // Temps réel par zone FC (calculé par Garmin) — endpoint dédié si absent du détail.
+      if (detail && !detail.hrTimeInZones) {
+        try { const z = await api('/activity-service/activity/' + id + '/hrTimeInZones'); if (z) detail.hrTimeInZones = z; } catch (e) {}
+      }
       prog('Détail des courses… (' + detailed + ')', 10 + Math.round(detailed / Math.max(1, rawActs.length) * 40));
     }
     const conv = convertActivity(a, detail);
     if (conv.vo2max) runVo2++;
+    if (conv.hr_zones) zonesOk++;
     activities.push(conv);
   }
   activities.sort((x, y) => (x.start || '') < (y.start || '') ? -1 : 1);
   const runs = activities.filter(a => a.type === 'running');
-  diag.push(`Activités : ${rawActs.length} (détails course ${detailOk}/${detailed} OK, dont VO₂max ${runVo2})`);
+  diag.push(`Activités : ${rawActs.length} (détails ${detailOk}/${detailed} OK · zones FC ${zonesOk} · VO₂max ${runVo2})`);
 
   prog('Sommeil, HRV, stress, FC repos…', 55);
   const ws = isoD(daysAgo(wdays)), we = isoD(new Date());
@@ -276,6 +282,7 @@ export function mapToRunQuest(data) {
       effort: null, // la charge Garmin (training_load) n'est pas une « relative effort » : on laisse le calcul FC faire foi
       gear: null,
       hrSeries: null,
+      hrZones: a.hr_zones || null, // temps réel par zone FC (calculé par Garmin)
     });
   }
 

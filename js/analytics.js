@@ -148,7 +148,13 @@ export function zoneDistribution(acts, fcMax = 195, sinceDays = 42) {
   const totals = zones.map(() => 0);
   const runs = runsOnly(acts).filter(a => new Date(a.date) > addDays(new Date(), -sinceDays));
   for (const a of runs) {
-    if (a.hrSeries && a.hrSeries.length > 5) {
+    if (a.hrZones && a.hrZones.length) {
+      // Temps réel par zone fourni par la montre (ex. Garmin) — le plus précis.
+      for (const z of a.hrZones) {
+        const zi = z.zone - 1;
+        if (zi >= 0 && zi < totals.length && z.seconds) totals[zi] += z.seconds;
+      }
+    } else if (a.hrSeries && a.hrSeries.length > 5) {
       const per = (a.movingTime || 0) / a.hrSeries.length;
       for (const [, bpm] of a.hrSeries) {
         const zi = zones.findIndex(z => bpm >= z.lo && bpm < z.hi);
