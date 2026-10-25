@@ -563,15 +563,37 @@ function openRescheduleMenu(program, ctx) {
 
 // ---------- Import de programmes ----------
 
+// Parse JSON tolérant : accepte un fichier contenant des balises Markdown
+// (```json … ```) ou du texte autour (fréquent avec un plan généré par une IA).
+function parseJsonLenient(text) {
+  const raw = String(text).trim();
+  try { return JSON.parse(raw); } catch (e) { /* on tente de nettoyer */ }
+  // retire les clôtures de bloc de code Markdown
+  let s = raw.replace(/^```[a-zA-Z]*\s*/m, '').replace(/```\s*$/m, '').trim();
+  try { return JSON.parse(s); } catch (e) { /* on tente l'extraction */ }
+  // extrait le plus grand bloc { … } ou [ … ]
+  const first = Math.min(...['{', '['].map(c => { const i = s.indexOf(c); return i < 0 ? Infinity : i; }));
+  const lastObj = s.lastIndexOf('}'), lastArr = s.lastIndexOf(']');
+  const last = Math.max(lastObj, lastArr);
+  if (isFinite(first) && last > first) {
+    const slice = s.slice(first, last + 1);
+    try {
+      const parsed = JSON.parse(slice);
+      return Array.isArray(parsed) ? { programs: parsed } : parsed;
+    } catch (e) { /* échec final */ }
+  }
+  throw new Error('Fichier illisible : ce n’est pas du JSON valide. Si le plan vient d’une IA, enlève le texte autour et les balises ``` et ne garde que l’objet { … }.');
+}
+
 function importProgramFile(ctx) {
   const input = el('input', { type: 'file', accept: '.json,application/json' });
   input.addEventListener('change', async () => {
     const file = input.files[0];
     if (!file) return;
     try {
-      const json = JSON.parse(await readFileAsText(file));
-      const list = json.programs || (json.weeks ? [json] : null);
-      if (!list) throw new Error('Attendu : { "programs": [...] } ou un programme seul');
+      const json = parseJsonLenient(await readFileAsText(file));
+      const list = Array.isArray(json) ? json : (json.programs || (json.weeks ? [json] : null));
+      if (!list || !list.length) throw new Error('Attendu : { "programs": [...] } ou un programme seul (avec une liste "weeks")');
       for (const p of list) {
         const errors = validateProgram(p);
         if (errors.length) throw new Error(`Programme « ${p.name || p.id} » invalide :\n– ${errors.slice(0, 5).join('\n– ')}`);

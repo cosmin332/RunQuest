@@ -181,7 +181,20 @@ async function init() {
   render();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // Mise à jour automatique : quand une nouvelle version prend le contrôle,
+    // on recharge pour servir le nouveau code (sinon la PWA installée reste
+    // bloquée sur l'ancienne version en cache).
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(reg => {
+      reg.update().catch(() => {});
+      // revérifie régulièrement tant que l'app reste ouverte
+      setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000);
+    }).catch(() => {});
   }
 }
 
